@@ -33,7 +33,7 @@ struct
 
   (* We rewrite subterms using rewrite conversions. These are conversions
      that also take a context and a list of variables bound outside of the
-     current subterm as parameters. For example, a simpe rewrite conversion
+     current subterm as parameters. For example, a simple rewrite conversion
      would be: fn _ => fn _ => Conv.rewr_conv @{thm add_commute};
      This ignores its parameters and tries to rewrite a goal's toplevel
      using the rule add_commute. *)
