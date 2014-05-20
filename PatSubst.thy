@@ -76,7 +76,7 @@ struct
       val prems = Thm.prems_of thm;
       val assumptions = map (cterm_of #> Thm.assume) prems;
     in
-      fold (fn assm => fn thm => Thm.implies_elim thm assm) assumptions thm
+      fold Thm.elim_implies assumptions thm
     end;
   
   (* Inverse operation of prems_to_hyps. *)
@@ -124,12 +124,12 @@ struct
             ) prems;
           fun discharge_prem prem thm = thm OF [prem];
         in
-          fold discharge_prem rewr_prems thm
+          thm |> hyps_to_prems |> fold discharge_prem rewr_prems 
         end;
         
-      fun wrapped_conv (p as (var, _)) = conv p #> hyps_to_prems #> generalize_var var; 
+      fun wrapped_conv (p as (var, _)) = conv p  #> generalize_var var; 
     in
-      Conv.abs_conv wrapped_conv ctxt #> prems_to_hyps
+      Conv.abs_conv wrapped_conv ctxt
     end;
 
   (* Rewrite in the conclusion of subgoal i, at the subterm identified by
