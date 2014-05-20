@@ -4,6 +4,23 @@ begin
 
 (* This file is intended to give an overview over the features of the new, modified subst method. *)
 
+(* Conditional rewriting works now, but not if there are premises
+   which contain schematic variables after rewriting. *)
+lemma test_theorem:
+fixes x :: nat
+shows "x \<le> y \<Longrightarrow> x \<ge> y \<Longrightarrow> x = y"
+by simp
+
+lemma
+fixes f :: "nat \<Rightarrow> nat"
+shows "f x = y"
+(* We can't apply the theorem because, after rewriting,
+   the result's premises will contain a free schematic variable ?y. *)
+apply(pat_subst test_theorem)
+(* We can apply the rule when we instantiate ?y beforehand. *)
+apply(pat_subst at "f x" test_theorem[where y = 0])
+oops
+
 (* First, some very basic pattern based rewriting. Rewriting is completely done via conversions. *)
 lemma
   fixes a::rat and b::rat and c::rat

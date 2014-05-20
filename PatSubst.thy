@@ -16,11 +16,9 @@ ML {*
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
   patterns but has diverged significantly during its development.
-
-  If a pattern contains abstractions, their variable names are internally
-  bound to the corresponding variables in the matched subterm. In deeper
-  patterns, or during instantiation, these identifiers can then be used to
-  represent the exact same variable again.
+  
+  We also allow introduction of identifiers for bound variables,
+  which can then be used to match arbitary subterms inside abstractions.
 *)
 
 structure PatSubst =
@@ -45,48 +43,114 @@ struct
      a specific subterm.
 
      During substitution, we are traversing the goal to find subterms that
-     we can rewrite. For each of these subterms, a subterm context is
+     we can rewrite. For each of these subterms, a subterm position is
      created and later used in creating a conversion that we use to try and
      rewrite this subterm. *)
-  type subterm_context = rewrite_conv -> rewrite_conv;
+  type subterm_position = rewrite_conv -> rewrite_conv;
 
   type bound_var = string * typ;
   type indentifier = string * int;
 
- (* A focusterm represents a subterm, is a 4-tuple (t, s, b, i) consisting of:
+ (* A focusterm represents a subterm, is a 4-tuple (t, p, b, i) consisting of:
     - The subterm t itself.
-    - A subterm context c, which is a function that can be used to create a
+    - A subterm position p, which is a function that can be used to create a
       conversion to rewrite this subterm.
     - The list of bound variables b in the subterm that belong to
       abstractions in its context.
     - A list of identifiers i for bound variables introduced by the user.
       Each identifier consists of a name and an index. The index is counted
       from the back of the bounds list. *)
-  type focusterm = term * subterm_context * bound_var list * indentifier list
+  type focusterm = term * subterm_position * bound_var list * indentifier list
 
   (* changes object "=" to meta "==" which prepares a given rewrite rule. *)
   fun prep_meta_eq ctxt =
     Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
+  
+  (* Convert a theorem of form
+       \<turnstile> P\<^sub>1 \<Longrightarrow> ... \<Longrightarrow> P\<^sub>n \<Longrightarrow> C
+     to
+       P\<^sub>1 ... P\<^sub>n \<turnstile> C *)
+  fun prems_to_hyps thm =
+    let
+      val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
+      val prems = Thm.prems_of thm;
+      val assumptions = map (cterm_of #> Thm.assume) prems;
+    in
+      fold (fn assm => fn thm => Thm.implies_elim thm assm) assumptions thm
+    end;
+  
+  (* Inverse operation of prems_to_hyps. *)
+  fun hyps_to_prems thm =
+    let
+      val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
+    in
+      fold Thm.implies_intr (map cterm_of (Thm.hyps_of thm)) thm
+    end;
+
+  (* Rewrite conversion intended to work with conditional rules. *)
+  fun rewr_conv rule ct =
+    let
+      val cterm_of = Thm.cterm_of (Thm.theory_of_thm rule);
+      val lhs_of = Thm.concl_of #> cterm_of #> Thm.dest_equals_lhs;
+      val rhs_of = Thm.concl_of #> cterm_of #> Thm.dest_equals_rhs;
+      val rule1 = Thm.incr_indexes (#maxidx (Thm.rep_cterm ct) + 1) rule;
+      val lhs = lhs_of rule1;
+      val rule2 = Thm.rename_boundvars (Thm.term_of lhs) (Thm.term_of ct) rule1;
+      val rule3 = Thm.instantiate (Thm.match (lhs, ct)) rule2
+                  handle Pattern.MATCH => raise CTERM ("rewr_conv", [lhs, ct]);
+      val rule4 =
+        if lhs_of rule3 aconvc ct then rule3
+        else let val ceq = Thm.dest_fun2 (Thm.cprop_of rule3)
+             in rule3 COMP Thm.trivial (Thm.mk_binop ceq ct (rhs_of rule3)) end;
+      (* Move all prems of the rule into the hypothesis to hide the fact that we
+         rewrite with a conditional rule. *)
+      val rule5 = prems_to_hyps rule4
+    in
+      Thm.transitive rule5 (Thm.beta_conversion true (rhs_of rule5))
+    end;
+  
+  (* We also need to extend abs_conv to work with conditional rules. *)
+  fun abs_conv conv ctxt =
+    let
+      (* Replace any occurrence of the bound variable in the hypothesis
+         by an all-quantified variable. *)
+      fun generalize_var cvar thm =
+        let
+          val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
+          val prems = Thm.prems_of thm;
+          val rewr_prems = map (fn prem =>
+              (* TODO: This is ugly, there must be an easier way to accomplish this. *)
+              (prem |> Logic.all (Thm.term_of cvar) |> cterm_of |> Thm.assume) COMP @{thm Pure.meta_spec}
+            ) prems;
+          fun discharge_prem prem thm = thm OF [prem];
+        in
+          fold discharge_prem rewr_prems thm
+        end;
+        
+      fun wrapped_conv (p as (var, _)) = conv p #> hyps_to_prems #> generalize_var var; 
+    in
+      Conv.abs_conv wrapped_conv ctxt #> prems_to_hyps
+    end;
 
   (* Rewrite in the conclusion of subgoal i, at the subterm identified by
      the conversion. The rewrite conversion is only applicable to the
      specific subterm the user wants to rewrite. We use the subterm context
      to make the rewrite conversion applicable to the top level. *)
   fun rewrite_concl ctxt i st (rewr : rewrite_conv) =
-    CONVERSION (Conv.params_conv ~1 (fn ctxt => Conv.concl_conv ~1 (rewr ctxt [])) ctxt) i st;
+    Seq.map hyps_to_prems (CONVERSION (Conv.params_conv ~1 (fn ctxt => Conv.concl_conv ~1 (rewr ctxt [])) ctxt) i st);
 
   (* Rewrite subgoal i, at the subterm identified by the conversion. *)
   fun rewrite_asm ctxt i st (rewr : rewrite_conv) =
-    CONVERSION (Conv.params_conv ~1 (fn ctxt => rewr ctxt []) ctxt) i st;
+    Seq.map hyps_to_prems (CONVERSION (Conv.params_conv ~1 (fn ctxt => rewr ctxt []) ctxt) i st);
 
   (* Functions for modifying subterm contexts. *)
-  fun below_abs (outer : subterm_context) : subterm_context = 
-    let fun inner rewr ctxt bounds = Conv.abs_conv (fn (ct, ctxt) => rewr ctxt (ct::bounds)) ctxt;
+  fun below_abs (outer : subterm_position) : subterm_position = 
+    let fun inner rewr ctxt bounds = abs_conv (fn (ct, ctxt) => rewr ctxt (ct::bounds)) ctxt;
     in inner #> outer end;
-  fun below_left (outer : subterm_context) : subterm_context =
+  fun below_left (outer : subterm_position) : subterm_position =
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> Conv.fun_conv;
     in inner #> outer end;
-  fun below_right (outer : subterm_context) : subterm_context =
+  fun below_right (outer : subterm_position) : subterm_position =
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> Conv.arg_conv; 
     in inner #> outer end;
 
@@ -273,7 +337,7 @@ struct
      an exception if we are not in the right context. This is not a problem,
      it just means that we cannot apply the conversion here. *)
   fun rewrite_conv rule inst idents ctxt bounds =
-    Conv.rewr_conv (inst_thm ctxt bounds idents inst rule) handle General.Subscript => Conv.no_conv;
+    rewr_conv (inst_thm ctxt bounds idents inst rule) handle General.Subscript => Conv.no_conv;
 
   (* Take a term, the bound variables in its context and identifiers for
      those variables, and create a focusterm that we can start our pattern
