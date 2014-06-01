@@ -4,8 +4,7 @@ begin
 
 (* This file is intended to give an overview over the features of the new, modified subst method. *)
 
-(* Conditional rewriting works now, but not if there are premises
-   which contain schematic variables after rewriting. *)
+(* Conditional rewriting works now. *)
 lemma test_theorem:
 fixes x :: nat
 shows "x \<le> y \<Longrightarrow> x \<ge> y \<Longrightarrow> x = y"
@@ -14,11 +13,10 @@ by simp
 lemma
 fixes f :: "nat \<Rightarrow> nat"
 shows "f x = y"
-(* We can't apply the theorem because, after rewriting,
-   the result's premises will contain a free schematic variable ?y. *)
-apply(pat_subst test_theorem)
-(* We can apply the rule when we instantiate ?y beforehand. *)
-apply(pat_subst at "f x" test_theorem[where y = 0])
+(* If we apply the rule directly, the result's premises will contain a free schematic variable ?y. *)
+(*apply(pat_subst test_theorem)*)
+(* It makes sense to instantiate ?y beforehand. *)
+apply(pat_subst at "f x" where y = 0 test_theorem)
 oops
 
 (* First, some very basic pattern based rewriting. Rewriting is completely done via conversions. *)
@@ -40,13 +38,13 @@ done
 
 (* We can also rewrite in the assumptions.  *)
 lemma 
-  fixes x::nat and y::nat
-  shows "x + y > c \<Longrightarrow> y + x > c"
-  apply(pat_subst in asm add_commute)
-  apply(pat_subst in "y + x > c" at asm add_commute)
-  apply(pat_subst at "?HOLE > c" at asm add_commute)
-  apply(assumption)
-  done
+fixes x::nat and y::nat
+shows "x + y > c \<Longrightarrow> y + x > c"
+apply(pat_subst in asm add_commute)
+apply(pat_subst in "y + x > c" at asm add_commute)
+apply(pat_subst at "?HOLE > c" at asm add_commute)
+apply(assumption)
+done
 
 
 (* Pattern based rewriting on subterms containing bound variables.
