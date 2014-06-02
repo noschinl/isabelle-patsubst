@@ -99,9 +99,9 @@ oops
 
 (* The "for" keyword. *)
 lemma "\<And>(x::int) y z. x + y + z = z + y + x"
-apply(pat_subst for x y z at "x + y" in "x + y + z" add_commute)
-apply(pat_subst for y z at "y + _ + z" add_commute)
-apply(pat_subst for at "_" add_commute)
+apply(pat_subst at "x + y" in "x + y + z" in concl for (x y z) add_commute)
+apply(pat_subst at "y + _ + z" in concl for (y z) add_commute)
+apply(pat_subst at "_" in concl for () add_commute)
 apply(simp)
 done
 

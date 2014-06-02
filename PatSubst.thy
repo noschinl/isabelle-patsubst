@@ -2,7 +2,7 @@ theory PatSubst
 imports Main cconv
 begin
 
-ML{* Toplevel.debug := true; *}
+ML{* Toplevel.debug := false; *}
 ML {*
 (*
   Author: Christoph Traut, TU Muenchen
@@ -93,13 +93,27 @@ struct
     | move_down_abs _ _ = NONE;
     
   (* Move to B in !!x1 ... xn. B. *)
-  fun move_down_params (ft as (t, _, _, _) : focusterm) =
-    if Logic.is_all t
-    then ft
-      |> move_down_right |> Option.valOf
-      |> move_down_abs NONE |> Option.valOf
-      |> move_down_params
-    else ft;
+  fun move_down_params idents (ft as (t, _, _, _) : focusterm) =
+    let
+      fun count_alls term =
+        if Logic.is_all term 
+        then 1 + count_alls (Logic.dest_all term |> #2)
+        else 0;
+      val num_alls = count_alls t;
+      val num_idents = length idents;
+      val _ = if num_idents > num_alls then error "Too many identifiers!" else ();
+    in
+      if num_alls = 0 then ft
+      else (if num_alls = num_idents
+           then ft
+             |> move_down_right |> Option.valOf
+             |> move_down_abs (idents |> hd |> SOME) |> Option.valOf
+             |> move_down_params (tl idents)
+           else ft
+             |> move_down_right |> Option.valOf
+             |> move_down_abs NONE |> Option.valOf
+             |> move_down_params idents)
+    end;
     
   (* Move to B in A1 ==> ... ==> An ==> B. *)
   fun move_down_concl (ft as (t, _, _, _) : focusterm) =
@@ -224,13 +238,13 @@ struct
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = I
         | apply_pattern In = Seq.maps valid_match_points
-        | apply_pattern Asm = Seq.map move_down_params
+        | apply_pattern Asm = Seq.map (move_down_params [])
                               #> Seq.maps move_down_assms 
                               #> Seq.map_filter move_down_right
-        | apply_pattern Concl = Seq.map (move_down_params #> move_down_concl)
+        | apply_pattern Concl = Seq.map (move_down_params [] #> move_down_concl)
                                 #> Seq.map_filter move_down_right
         | apply_pattern Prop = I
-        | apply_pattern (For idents) = Seq.map move_down_params
+        | apply_pattern (For idents) = Seq.map (move_down_params idents)
         | apply_pattern (Term term) =
             Seq.filter (focusterm_matches theory term) 
             #> Seq.map_filter (find_subterm_hole term)
@@ -348,19 +362,18 @@ struct
                             || Args.$$$ "in" >> K In;
           val atom_parser = Scan.lift (Args.$$$ "asm" >> K Asm
                                     || Args.$$$ "concl" >> K Concl
-                                    || Args.$$$ "prop" >> K Prop)
+                                    || Args.$$$ "goal" >> K Prop)
                           || Scan.peek parse_term >> Term;
+          val for_parser = Args.$$$ "for" |-- Args.parens (Scan.repeat (Scan.unless keyword_parser Args.name)) >> For;
                           
-          val complete_parser = Scan.repeat (Scan.lift keyword_parser -- atom_parser);
-          fun append_pair (keyword, term) list =  keyword :: term :: list;
-          fun flatten_pairs pairs = fold_rev append_pair pairs []
+          val complete_parser = Scan.repeat ((Scan.lift for_parser >> single) || (Scan.lift keyword_parser -- atom_parser >> (fn (a, b) => [a, b])));
           fun append_default [] = [In, Concl]
             | append_default patterns = 
                 case patterns |> rev |> hd of
                   Term _ => patterns @ [In, Concl]
                 | _ => patterns;
         in
-          complete_parser >> flatten_pairs >> append_default
+          complete_parser >> flat >> append_default
         end;
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
