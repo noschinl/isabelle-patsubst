@@ -8,7 +8,7 @@ begin
 lemma test_theorem:
 fixes x :: nat
 shows "x \<le> y \<Longrightarrow> x \<ge> y \<Longrightarrow> x = y"
-by simp
+by (rule Orderings.order_antisym)
 
 lemma
 fixes f :: "nat \<Rightarrow> nat"
@@ -16,7 +16,7 @@ shows "f x = y"
 (* If we apply the rule directly, the result's premises will contain a free schematic variable ?y. *)
 (*apply(pat_subst test_theorem)*)
 (* It makes sense to instantiate ?y beforehand. *)
-apply(pat_subst at "f x" where y = 0 test_theorem)
+apply(pat_subst at "f x" test_theorem where y = 0)
 oops
 
 
@@ -55,7 +55,6 @@ apply(pat_subst at "?HOLE > c" at asm add_commute)
 apply(assumption)
 done
 
-
 (* Pattern based rewriting on subterms containing bound variables.
    This is accomplished by parametrizing Vars in the pattern with 
    all bound variables in the current subterms context. *)
@@ -85,16 +84,16 @@ definition "f_inv (I :: nat \<Rightarrow> bool) n \<equiv> f n"
 (* We have a lemma with a bound variable n, where we want to add an invariant to f. *)
 lemma "P (\<lambda>n. f n + 1) = x"
 (* Substitute f_inv for f and instantiate ?I with a simple invariant. *)
-apply(pat_subst where I = "\<lambda>x. True" f_inv_def[symmetric])
+apply(pat_subst f_inv_def[symmetric] where I = "\<lambda>x. True")
 apply(pat_subst f_inv_def)
 
 (* We can also add an invariant that contains the variable n bound in the outer context.
    For this, we need to bind this variable to an identifier. *)
-apply(pat_subst in "\<lambda>n. ?HOLE" where I = "\<lambda>x. n < x + 1" f_inv_def[symmetric])
+apply(pat_subst in "\<lambda>n. ?HOLE" f_inv_def[symmetric] where I = "\<lambda>x. n < x + 1")
 apply(pat_subst f_inv_def)
 
 (* Any identifier will work *)
-apply(pat_subst in "\<lambda>abc. ?HOLE" where I = "\<lambda>x. abc < x + 1" f_inv_def[symmetric])
+apply(pat_subst in "\<lambda>abc. ?HOLE" f_inv_def[symmetric] where I = "\<lambda>x. abc < x + 1")
 apply(pat_subst f_inv_def)
 oops
 
@@ -122,7 +121,7 @@ lemma "
       (0,0)
   ) = 12"
 (* We use pattern to specify exactly which while loop to annotate and also to give names to bound variables in the goal. *)
-apply(pat_subst in "snd (while _ (\<lambda>(i, _). ?HOLE) _)" where ?I = "\<lambda>(j::nat, x). x = j + 3*i" while_inv_def[symmetric])
+apply(pat_subst in "snd (while _ (\<lambda>(i, _). ?HOLE) _)" while_inv_def[symmetric] where ?I = "\<lambda>(j::nat, x). x = j + 3*i" )
 oops
 
 

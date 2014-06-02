@@ -2,7 +2,7 @@ theory PatSubst
 imports Main cconv
 begin
 
-ML{* Toplevel.debug := false; *}
+ML{* Toplevel.debug := true; *}
 ML {*
 (*
   Author: Christoph Traut, TU Muenchen
@@ -12,7 +12,8 @@ ML {*
   pattern language.
 
   The patterns accepted by pat_subst are of the following form:
-    <rewrite_pattern> ::= (at|in) <term> [<rewrite_pattern>];
+    <atom>    ::= <term> | concl | asm | prop
+    <pattern> ::= (in <atom> | at <atom> | for <names>) [<pattern>]
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
   patterns but has diverged significantly during its development.
@@ -25,12 +26,12 @@ structure PatSubst =
 struct
   (* Data type to represent a single pattern step.
      Patterns entered by the user will be of type "pattern list".  *)
-  datatype pattern = At | In | Term of term;
+  datatype pattern = At | In | Term of term | Concl | Asm | Prop | For of string list;
 
   (* Some types/terminology used in the code below: *)
 
   (* We rewrite subterms using rewrite conversions. These are conversions
-     that also take a context and a list of variables bound outside of the
+     that also take a context and a list of variables bound at the
      current subterm as parameters. For example, a simple rewrite conversion
      would be: fn _ => fn _ => CConv.rewr_conv @{thm add_commute};
      This ignores its parameters and tries to rewrite a goal's toplevel
@@ -38,7 +39,7 @@ struct
   type rewrite_conv = Proof.context -> cterm list -> conv;
 
   (* To apply such a rewrite conversion to a subterm of our goal, we use
-     subterm contexts, which are just functions that map a rewrite conversion,
+     subterm positions, which are just functions that map a rewrite conversion,
      working on the top level, to a new rewrite conversion, working on
      a specific subterm.
 
@@ -66,17 +67,6 @@ struct
   fun prep_meta_eq ctxt =
     Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
 
-  (* Rewrite in the conclusion of subgoal i, at the subterm identified by
-     the conversion. The rewrite conversion is only applicable to the
-     specific subterm the user wants to rewrite. We use the subterm context
-     to make the rewrite conversion applicable to the top level. *)
-  fun rewrite_concl ctxt (rewr : rewrite_conv) =
-    CCONVERSION (CConv.params_conv ~1 (fn ctxt => CConv.concl_conv ~1 (rewr ctxt [])) ctxt);
-
-  (* Rewrite subgoal i, at the subterm identified by the conversion. *)
-  fun rewrite_asm ctxt (rewr : rewrite_conv) =
-    CCONVERSION (CConv.params_conv ~1 (fn ctxt => rewr ctxt []) ctxt);
-
   (* Functions for modifying subterm contexts. *)
   fun below_abs (outer : subterm_position) : subterm_position = 
     let fun inner rewr ctxt bounds = CConv.abs_conv (fn (ct, ctxt) => rewr ctxt (ct::bounds)) ctxt;
@@ -101,6 +91,29 @@ struct
         let val new_idents = if is_some ident then (the ident, length bound_vars) :: idents else idents;
         in SOME (sub, below_abs conversion, ((name, typ) :: bound_vars), new_idents) : focusterm option end
     | move_down_abs _ _ = NONE;
+    
+  (* Move to B in !!x1 ... xn. B. *)
+  fun move_down_params (ft as (t, _, _, _) : focusterm) =
+    if Logic.is_all t
+    then ft
+      |> move_down_right |> Option.valOf
+      |> move_down_abs NONE |> Option.valOf
+      |> move_down_params
+    else ft;
+    
+  (* Move to B in A1 ==> ... ==> An ==> B. *)
+  fun move_down_concl (ft as (t, _, _, _) : focusterm) =
+    case t of
+      (Const ("==>", _) $ _) $ _ => ft |> move_down_right |> Option.valOf |> move_down_concl
+    | _ =>  ft;
+    
+  (* Move to the A's in A1 ==> ... ==> An ==> B. *)
+  fun move_down_assms (ft as (t, _, _, _) : focusterm) =
+    case t of
+      (Const ("==>", _) $ _) $ _ =>
+        Seq.cons (ft |> move_down_left |> Option.valOf |> move_down_right |> Option.valOf)
+                 (move_down_assms (move_down_right ft |> Option.valOf))
+    | _ =>  Seq.empty;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
@@ -211,11 +224,18 @@ struct
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = I
         | apply_pattern In = Seq.maps valid_match_points
+        | apply_pattern Asm = Seq.map move_down_params
+                              #> Seq.maps move_down_assms 
+                              #> Seq.map_filter move_down_right
+        | apply_pattern Concl = Seq.map (move_down_params #> move_down_concl)
+                                #> Seq.map_filter move_down_right
+        | apply_pattern Prop = I
+        | apply_pattern (For idents) = Seq.map move_down_params
         | apply_pattern (Term term) =
             Seq.filter (focusterm_matches theory term) 
             #> Seq.map_filter (find_subterm_hole term)
     in
-      valid_match_points #> fold_rev apply_pattern pattern_list
+      Seq.single #> fold_rev apply_pattern pattern_list
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
@@ -253,7 +273,7 @@ struct
         fun prepare thm (t1, t2) = 
           let
             val var = find_var thm t1;
-            val coerce  = Type.constraint (Term.type_of var);
+            val coerce = Type.constraint (Term.type_of var);
             val check = Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_schematic ctxt);
             val parse = Syntax.parse_term ctxt #> rewrite_bounds #> coerce #> check;
           in
@@ -265,90 +285,37 @@ struct
         instantiate thm
       end;
 
-  (* This is the rewriting conversion, working on a subterm of the goal,
-     possibly below some abstractions. If there was an instantiation given,
-     then we have to instantiate the rule before rewriting. This might throw
-     an exception if we are not in the right context. This is not a problem,
-     it just means that we cannot apply the conversion here. *)
-  fun rewrite_conv rule inst idents ctxt bounds =
-    CConv.rewr_conv (inst_thm ctxt bounds idents inst rule) handle General.Subscript => CConv.no_conv;
-
-  (* Take a term, the bound variables in its context and identifiers for
-     those variables, and create a focusterm that we can start our pattern
-     matching on. *)
-  fun startterm term bounds idents =
-    let
-      val idents = the_default [] idents |> rev;
-      fun join _ [] = []
-        | join n (i::is) = (i, n) :: join (n-1) is;
-    in
-      if length idents > length bounds
-      then error "Too many identifiers!"
-      else (term, I, bounds, join (length bounds - 1) idents)
-    end;
-
-  (* Rewrite in the conclusion of subgoal i. *)
-  fun rewrite_goal_with_thm ctxt th i (pattern, inst, idents) rule =
+  (* Rewrite in subgoal i. *)
+  fun rewrite_goal_with_thm ctxt th i (pattern, inst) rule =
     let
       val theory = Thm.theory_of_thm th;
       val goal = Logic.get_goal (Thm.prop_of th) i;
-      val conclterm = goal |> Term.strip_all_body |> Logic.strip_imp_concl;
-      val bounds = Term.strip_all_vars goal |> rev;
-      val matches = find_matches theory pattern (startterm conclterm bounds idents);
-      fun subst (_, context, _, idents) = rewrite_concl ctxt (context (rewrite_conv rule inst idents)) i th;
+      val matches = find_matches theory pattern (goal, I, [], []);
+      fun rewrite_conv rule inst idents ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds idents inst rule);
+      (* TODO: The subterm position should implicitly carry the ctxt and identifiers. *)
+      fun subst (_, position, _, idents) = CCONVERSION (position (rewrite_conv rule inst idents) ctxt []) i th;
     in
       Seq.maps subst matches
     end;
   
-    (* Rewrite in the whole subgoal i where the pattern matches. *)
-    fun rewrite_asm_with_thm ctxt th i (pattern, inst, idents) rule =
-      let
-        val theory = Thm.theory_of_thm th;
-        val goal = Logic.get_goal (Thm.prop_of th) i;
-        val asmterm = Term.strip_all_body goal;
-        val bounds = Term.strip_all_vars goal |> rev;
-        val matches = find_matches theory pattern (startterm asmterm bounds idents);
-        fun subst (_, context, _, indents) = rewrite_asm ctxt (context (rewrite_conv rule inst indents)) i th;
-      in
-        Seq.maps subst matches
-      end;
-  
   fun distinct_subgoals th = the_default th (SINGLE distinct_subgoals_tac th);
-
-  (* Regardless of whether we substitute in the assumption or the conclusion,
-     we basically do the same thing. *)
-  fun general_patsubst_tac ctxt thms subst_step =
-    Seq.of_list thms
-    |> Seq.maps (prep_meta_eq ctxt #> Seq.of_list)
-    |> Seq.maps subst_step
-    |> Seq.map distinct_subgoals;
 
   (* PatSubst tactics. *)
   fun patsubst_tac ctxt pattern thms i th =
-    general_patsubst_tac ctxt thms (rewrite_goal_with_thm ctxt th i pattern);
-
-  fun patsubst_asm_tac ctxt pattern thms i th =
-    general_patsubst_tac ctxt thms (rewrite_asm_with_thm ctxt th i pattern);
+    Seq.of_list thms
+    |> Seq.maps (prep_meta_eq ctxt #> Seq.of_list)
+    |> Seq.maps (rewrite_goal_with_thm ctxt th i pattern)
+    |> Seq.map distinct_subgoals;
 
   (* Method setup for pat_subst.
      TODO: Merge with subst method in 'src/Tools/eqsubst.ML'. *)
   val setup =
     let
       fun to_method f a b c = SIMPLE_METHOD' (f a b c);
-      val patsubst_asm_meth = to_method patsubst_asm_tac;
       val patsubst_meth = to_method patsubst_tac;
-
-      fun pattern_parser ctxt =
+      
+      val pattern_parser =
         let
-          (* Parse a list of keywords and terms. *)
-          val tokenizer = Scan.repeat ((Args.$$$ "in" || Args.$$$ "at") -- (Args.$$$ "asm" || Parse.term));
-
-          (* We provide a special pattern to indicate that substitution 
-             should take place in the assumptions of the subgoal. *)
-          fun parse_asm [(k, "asm")] = (true, [(k, "?HOLE ==> PROP _")])
-            | parse_asm (l::ls) = parse_asm ls ||> (curry op:: l)
-            | parse_asm _ = (false, []);
-           
           (* Normally, we would use Proof_Context.read_term_pattern to parse
              our patterns. But unfortunately, it treats dummy variables and
              true schematic variables differently. Since we do not want to
@@ -374,32 +341,34 @@ struct
               replace_dummy_patterns #>
               Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_pattern ctxt)
             end;
-        
-          val parse_term = read_pattern (Context.proof_of ctxt) #> Term;
-          fun parse_keyword "in" = In
-            | parse_keyword "at" = At
-            | parse_keyword _ = Scan.fail ();
-
-          fun parse_pair (keyword, term) list = (parse_keyword keyword) :: (parse_term term) :: list;
-          fun to_list tokens = fold_rev parse_pair tokens []
-          val token_parser = (parse_asm ##> to_list);
+          
+          fun parse_term ctxt = Parse.term >> (read_pattern (Context.proof_of ctxt));
+            
+          val keyword_parser = Args.$$$ "at" >> K At
+                            || Args.$$$ "in" >> K In;
+          val atom_parser = Scan.lift (Args.$$$ "asm" >> K Asm
+                                    || Args.$$$ "concl" >> K Concl
+                                    || Args.$$$ "prop" >> K Prop)
+                          || Scan.peek parse_term >> Term;
+                          
+          val complete_parser = Scan.repeat (Scan.lift keyword_parser -- atom_parser);
+          fun append_pair (keyword, term) list =  keyword :: term :: list;
+          fun flatten_pairs pairs = fold_rev append_pair pairs []
+          fun append_default [] = [In, Concl]
+            | append_default patterns = 
+                case patterns |> rev |> hd of
+                  Term _ => patterns @ [In, Concl]
+                | _ => patterns;
         in
-          tokenizer >> token_parser
-        end;
-
-      val identifier_parser = let
-          val name_parser = Scan.unless (Args.$$$ "at" || Args.$$$ "in") Args.name;
-        in
-          Args.$$$ "for" |-- Scan.repeat name_parser |> Scan.lift
+          complete_parser >> flatten_pairs >> append_default
         end;
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
-      val subst_parser = Scan.option identifier_parser -- Scan.peek pattern_parser -- Scan.option (Scan.lift instantiation_parser) -- Attrib.thms;
+      val subst_parser = pattern_parser -- Attrib.thms -- Scan.option (Scan.lift instantiation_parser);
   
-      fun subst_method (((idents, (true, pattern)), inst), inthms) ctxt = patsubst_asm_meth ctxt (pattern, inst, idents) inthms
-        | subst_method (((idents, (false, pattern)), inst), inthms) ctxt = patsubst_meth ctxt (pattern, inst, idents) inthms;
+      fun subst_method ((pattern, inthms), inst) ctxt = patsubst_meth ctxt (pattern, inst) inthms;
     in
-      Method.setup @{binding pat_subst} (subst_parser >> subst_method) 
+      Method.setup @{binding pat_subst} (subst_parser >> subst_method)
                    "extended single-step substitution, allowing subterm selection via patterns."
     end;
 end;
