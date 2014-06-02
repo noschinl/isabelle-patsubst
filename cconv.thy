@@ -86,35 +86,108 @@ struct
   (* TODO: Try to implement a combination conversion and
            reduce fun_conv and arg_conv to special cases. *)
   fun fun_conv conversion cterm =
-    let
-      val (l, r) = Thm.dest_comb cterm;
-    in
-      add_arg (conversion l) r
-    end;
+    let val (l, r) = Thm.dest_comb cterm;
+    in add_arg (conversion l) r end;
     
   fun arg_conv conversion cterm =
+    let val (l, r) = Thm.dest_comb cterm;
+    in add_fun (conversion r) l end;
+
+  fun inst_vars_in_prems ctxt thm =
     let
-      val (l, r) = Thm.dest_comb cterm;
+      (* Find the set of schematic variables in a theorem. *)
+      val term_union = union (op= : (term * term) -> bool);
+
+      fun find_vars (v as (Var _)) = [v]
+        | find_vars (l $ r) = term_union (find_vars l) (find_vars r)
+        | find_vars (Abs (_, _, a)) = (find_vars a)
+        | find_vars _ = [];
+
+      val prems = Thm.prems_of thm;
+      fun add_vars_in_prem prem list = term_union list (find_vars prem);
+      val vars_in_prems = fold add_vars_in_prem prems [];
+  
+      (* Then instantiate them with fresh free variables. *)
+      
+      (* First, find as many fresh variable names as we have vars. *)
+      val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm)
+      
+      fun find_instantiation (var as (Var ((n, _), t))) (vnames, ctxt) =
+        let
+          val (n', ctxt') = yield_singleton Variable.variant_fixes n ctxt;
+        in
+          ((var |> cterm_of, Free (n', t) |> cterm_of) :: vnames, ctxt')
+        end
+        | find_instantiation _ _ = error "Wrong parameter!";
+      
+      val (instantiation, ctxt') =  fold find_instantiation vars_in_prems ([], ctxt);
+      val inst_thm = Thm.instantiate ([], instantiation) thm;
     in
-      add_fun (conversion r) l
+      (inst_thm, instantiation, ctxt')
     end;
   
-  (* TODO: Implement! *)
-  val abs_conv = Conv.abs_conv;
+  (* Generalize back. *)
+  fun generalize_back instantiation thm =
+    let
+      fun generalization_of (_, cfree) =
+        case cfree |> Thm.term_of of
+          Free (s, _) => s
+        | _ => error "Wrong parameter!";
+     in
+       Drule.generalize ([], map generalization_of instantiation) thm |> Thm.adjust_maxidx_thm ~1
+     end;
+
+  (* Replace any occurrence of the bound variable in the hypothesis
+     by an all-quantified variable. *)
+  fun forall_intr_var cvar thm =
+    let
+      val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
+      val prems = Thm.prems_of thm;
+      val forall_intro_prems = map (fn prem =>
+          (* TODO: This is ugly, there must be an easier way to accomplish this. *)
+          (prem |> Logic.all (Thm.term_of cvar) |> cterm_of |> Thm.assume) COMP @{thm Pure.meta_spec}
+        ) prems;
+      fun discharge_prem prem thm = thm OF [prem];
+    in
+      thm |> fold discharge_prem forall_intro_prems 
+    end;
+  
+  (* We also need to extend abs_conv to work with conditional rules. *)
+  fun abs_conv cv ctxt ct =
+    (case Thm.term_of ct of
+       Abs (x, _, _) =>
+         let
+           val (u, ctxt') = yield_singleton Variable.variant_fixes Name.uu ctxt;
+           val (v, ct') = Thm.dest_abs (SOME u) ct;
+           val eq = cv (v, ctxt') ct';
+           
+           fun abstract_rule eq =
+             let              
+               val (eq_no_vars_in_prems, inst, _) = inst_vars_in_prems ctxt' eq;
+             in
+              eq_no_vars_in_prems
+              |> forall_intr_var v
+              |> Thm.abstract_rule x v
+              |> Drule.implies_intr_hyps
+              |> generalize_back inst
+             end;
+         in
+           if Thm.is_reflexive eq
+           then all_conv ct
+           else abstract_rule eq
+         end
+     | _ => raise CTERM ("abs_conv", [ct]));
   
   val arg1_conv = fun_conv o arg_conv;
   val fun2_conv = fun_conv o fun_conv;
     
   (* conversions on HHF rules *)
 
-  (* TODO: Implement! Depends on abs_conv. *)
   (*rewrite B in !!x1 ... xn. B*)
-  (*fun params_conv n cv ctxt ct =
+  fun params_conv n cv ctxt ct =
     if n <> 0 andalso Logic.is_all (Thm.term_of ct)
     then arg_conv (abs_conv (params_conv (n - 1) cv o #2) ctxt) ct
-    else cv ctxt ct;*)
-  (*val params_conv: int -> (Proof.context -> conv) -> Proof.context -> conv*)
-  fun params_conv _ conv ctxt = conv ctxt;
+    else cv ctxt ct;
 
   (* TODO: This code behaves not exactly like Conv.prems_conv does.
            Fix this! *)

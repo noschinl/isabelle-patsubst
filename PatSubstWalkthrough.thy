@@ -19,6 +19,15 @@ shows "f x = y"
 apply(pat_subst at "f x" where y = 0 test_theorem)
 oops
 
+
+lemma
+fixes f :: "nat \<Rightarrow> nat"
+shows "f x = P (\<lambda>(x::nat). 3 + x + y)"
+(* It also works below abstractions, even when there are free schematic variables. *)
+(* Unfortunately, the generated variable names are not very pretty. *)
+apply(pat_subst at "3 + _"  test_theorem)
+oops
+
 (* First, some very basic pattern based rewriting. Rewriting is completely done via conversions. *)
 lemma
   fixes a::rat and b::rat and c::rat
