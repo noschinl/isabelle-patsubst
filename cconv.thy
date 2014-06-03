@@ -10,6 +10,52 @@ lemma fun_cong: "(f \<equiv> g) \<Longrightarrow> (f s \<equiv> g s)" by simp
 lemma arg_cong: "(s \<equiv> t) \<Longrightarrow> (f s \<equiv> f t)" by simp
 
 ML {*
+val combination_thm =
+  let
+    val fg = @{cprop "f :: 'a \<Rightarrow> 'b \<equiv> g :: 'a \<Rightarrow> 'b"};
+    val st = @{cprop "s :: 'a \<equiv> t :: 'a"};
+    val fgthm = Thm.assume fg;
+    val stthm = Thm.assume st;
+    val thm = Thm.implies_intr fg (Thm.implies_intr st (Thm.combination fgthm stthm))
+  in Drule.export_without_context thm end;
+
+val abstract_rule_thm =
+  let
+    val eq = @{cprop "\<And>x :: 'a. s x \<equiv> t x"}
+    val x = @{cterm "x :: 'a"}
+    val thm = eq
+      |> Thm.assume
+      |> Thm.forall_elim x
+      |> Thm.abstract_rule "x" x
+      |> Thm.implies_intr eq
+  in Drule.export_without_context thm end;
+*}
+
+ML {*
+  val p = @{prop "P x"}
+  val t = Object_Logic.drop_judgment @{theory} p
+  val i = Object_Logic.is_judgment @{theory} p
+  val p' = Object_Logic.ensure_propT @{theory} t
+*}
+ML Object_Logic.add_judgment_cmd
+lemma X: "(\<And>x. s x \<equiv> t x) \<Longrightarrow> \<lambda>x. s x \<equiv> \<lambda>x. t x" using [[simp_trace]] by simp
+lemma Y: "P \<Longrightarrow> 1 + x \<equiv> x + (1 :: nat)" by arith
+declare [[eta_contract=false]]
+thm X[of "\<lambda>x. 1 + x", OF Y]
+
+ML {*
+fun judgment_conv cv ct =
+  if Object_Logic.is_judgment (Thm.theory_of_cterm ct) (Thm.term_of ct)
+  then Conv.arg_conv cv ct
+  else cv ct
+*}
+
+ML {* val t = @{cpat "op ==>"} *}
+no_notation Trueprop ("(_)" 5)
+ML t
+
+
+ML {*
 signature CCONV =
 sig
   val no_conv : conv
@@ -31,6 +77,8 @@ structure CConv : CCONV =
 struct
   val no_conv = Conv.no_conv;
   val all_conv = Conv.all_conv;
+
+  fun transitive th1 th2 = Drule.transitive_thm OF [th1, th2]
   
   (* Rewrite conversion intended to work with conditional rules. *)
   fun rewr_conv rule ct =
@@ -48,10 +96,7 @@ struct
         else let val ceq = Thm.dest_fun2 (Thm.cprop_of rule3)
              in rule3 COMP Thm.trivial (Thm.mk_binop ceq ct (rhs_of rule3)) end;
     in
-      (* TODO: Is the beta-reduction step really necessary?
-               Do I need to put it back in? *)
-      (*Thm.transitive rule4 (Thm.beta_conversion true (rhs_of rule4))*)
-      rule4
+      transitive rule4 (Thm.beta_conversion true (rhs_of rule4))
     end;
   
   (* TODO: add_arg and add_fun are ugly and verbose. Make them simpler. *)
