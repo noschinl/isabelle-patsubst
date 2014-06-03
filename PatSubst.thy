@@ -79,36 +79,36 @@ struct
     in inner #> outer end;
 
   (* Functions for moving down through focusterms. *)
-  fun move_down_left (((l $ _), conversion, bound_vars, idents) : focusterm) =
-        SOME (l, below_left conversion, bound_vars, idents) : focusterm option
-    | move_down_left _ = NONE;
-  fun move_down_right (((_ $ r), conversion, bound_vars, idents) : focusterm) =
-        SOME (r, below_right conversion, bound_vars, idents) : focusterm option
-    | move_down_right _ = NONE;
-  fun move_down_abs ident ((Abs (name, typ, sub), conversion, bound_vars, idents) : focusterm) =
+  fun move_below_left (((l $ _), conversion, bound_vars, idents) : focusterm) =
+        (l, below_left conversion, bound_vars, idents) : focusterm
+    | move_below_left ft = raise TERM ("move_below_left", [#1 ft]);
+  fun move_below_right (((_ $ r), conversion, bound_vars, idents) : focusterm) =
+        (r, below_right conversion, bound_vars, idents) : focusterm
+    | move_below_right ft = raise TERM ("move_below_right", [#1 ft]);
+  fun move_below_abs ident ((Abs (name, typ, sub), conversion, bound_vars, idents) : focusterm) =
         (* If the user supplied an identifier for the variable bound by
            this abstraction, then remember it. *)
         let val new_idents = if is_some ident then (the ident, length bound_vars) :: idents else idents;
-        in SOME (sub, below_abs conversion, ((name, typ) :: bound_vars), new_idents) : focusterm option end
-    | move_down_abs _ _ = NONE;
+        in (sub, below_abs conversion, ((name, typ) :: bound_vars), new_idents) : focusterm end
+    | move_below_abs _ ft = raise TERM ("move_below_abs", [#1 ft]);
     
   (* Move to B in !!x_1 ... x_n. B. *)
-  fun move_down_params (ft as (t, _, _, _) : focusterm) =
+  fun move_below_params (ft as (t, _, _, _) : focusterm) =
     if Logic.is_all t 
     then ft
-         |> move_down_right |> Option.valOf
-         |> move_down_abs NONE |> Option.valOf
-         |> move_down_params
+         |> move_below_right
+         |> move_below_abs NONE
+         |> move_below_params
     else ft;
     
   (* Move to B in !!x_1 ... x_n. B.
      Intoduce identifers i_1 .. i_k for x_(n-k+1) .. x_n*)
-  fun move_down_for idents (ft as (t, _, _, _) : focusterm) =
+  fun move_below_for idents (ft as (t, _, _, _) : focusterm) =
     let
       fun recurse ident idents =
-        move_down_right #> Option.valOf
-        #> move_down_abs ident #> Option.valOf
-        #> move_down_for idents
+        move_below_right
+        #> move_below_abs ident
+        #> move_below_for idents
         
       fun count_alls term =
         if Logic.is_all term 
@@ -117,7 +117,7 @@ struct
         
       val num_alls = count_alls t;
     in
-      if num_alls = 0 andalso length idents = 0  then SOME ft
+      if num_alls = 0 andalso length idents = 0 then SOME ft
       else case Int.compare(num_alls, length idents) of
              EQUAL   => recurse (idents |> hd |> SOME) (tl idents) ft
            | GREATER => recurse NONE idents ft
@@ -125,33 +125,33 @@ struct
     end;
     
   (* Move to B in A1 ==> ... ==> An ==> B. *)
-  fun move_down_concl (ft as (t, _, _, _) : focusterm) =
+  fun move_below_concl (ft as (t, _, _, _) : focusterm) =
     case t of
-      (Const ("==>", _) $ _) $ _ => ft |> move_down_right |> Option.valOf |> move_down_concl
+      (Const ("==>", _) $ _) $ _ => ft |> move_below_right |> move_below_concl
     | _ =>  ft;
     
   (* Move to the A's in A1 ==> ... ==> An ==> B. *)
-  fun move_down_assms (ft as (t, _, _, _) : focusterm) =
+  fun move_below_assms (ft as (t, _, _, _) : focusterm) =
     case t of
       (Const ("==>", _) $ _) $ _ =>
-        Seq.cons (ft |> move_down_left |> Option.valOf |> move_down_right |> Option.valOf)
-                 (move_down_assms (move_down_right ft |> Option.valOf))
+        Seq.cons (ft |> move_below_left |> move_below_right)
+                 (ft |> move_below_right |> move_below_assms)
     | _ =>  Seq.empty;
   
-  (* TODO: This isn't logic agnostic, can I improve this? *)
-  fun move_down_trueprop (ft as (t, _, _, _) : focusterm) =
-    case t of
-      Const ("HOL.Trueprop", _) $ _ => ft |> move_down_right |> Option.valOf
-    | _ =>  ft;
+  (* Descend below a judment, if there is one. *)
+  fun move_below_judgment theory (ft as (t, _, _, _) : focusterm) =
+    if Object_Logic.is_judgment theory t
+    then ft |> move_below_right
+    else ft;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
   fun find_subterms condition (focusterm as (subterm, _, _, _) : focusterm) =
     let
-      val recurse = Option.valOf #> find_subterms condition;    
+      val recurse = find_subterms condition;    
       val recursive_matches = case subterm of
-          _ $ _ => Seq.append (focusterm |> move_down_left |> recurse) (focusterm |> move_down_right |> recurse)
-        | Abs _ => focusterm |> move_down_abs NONE |> recurse
+          _ $ _ => Seq.append (focusterm |> move_below_left |> recurse) (focusterm |> move_below_right |> recurse)
+        | Abs _ => focusterm |> move_below_abs NONE |> recurse
         | _     => Seq.empty;
     in
       (* If the condition is met, then the current focusterm is part of the
@@ -220,23 +220,22 @@ struct
          that corresponds to the supplied Var term. *)
       fun find_var varname pattern focusterm =
         let
-          fun find_var_maybe _ NONE = NONE
-            | find_var_maybe pattern (SOME focusterm) =
-                case pattern of
-                  Abs (n, _, sub) => find_var_maybe sub (move_down_abs (SOME n) focusterm)
-                | l $ r =>
-                    let val left = find_var_maybe l (move_down_left focusterm);
-                    in if is_some left
-                       then left
-                       else find_var_maybe r (move_down_right focusterm)
-                    end
-                | Var ((name, _), _) => 
-                  if varname = name
-                    then SOME focusterm
-                    else NONE
-                | _ => NONE;
+          fun find_var_maybe pattern focusterm =
+            (case pattern of
+               Abs (n, _, sub) => find_var_maybe sub (move_below_abs (SOME n) focusterm)
+             | l $ r =>
+                 let val left = find_var_maybe l (move_below_left focusterm);
+                 in if is_some left
+                    then left
+                    else find_var_maybe r (move_below_right focusterm)
+                 end
+            | Var ((name, _), _) => 
+                if varname = name
+                then SOME focusterm
+                else NONE
+            | _ => NONE) handle TERM _ => NONE;
         in
-          find_var_maybe pattern (SOME focusterm)
+          find_var_maybe pattern focusterm
         end;
 
       fun find_subterm_hole pattern =
@@ -251,19 +250,15 @@ struct
         end;
 
       (* Apply a pattern to a sequence of focusterms. *)
-      fun apply_pattern At = I
+      fun apply_pattern At = Seq.map (move_below_judgment theory)
         | apply_pattern In = Seq.maps valid_match_points
-        | apply_pattern Asm = Seq.map move_down_params
-                              #> Seq.maps move_down_assms
-                              #> Seq.map move_down_trueprop
-        | apply_pattern Concl = Seq.map (move_down_params #> move_down_concl)
-                                #> Seq.map move_down_trueprop
+        | apply_pattern Asm = Seq.map move_below_params #>
+                              Seq.maps move_below_assms
+        | apply_pattern Concl = Seq.map (move_below_params #> move_below_concl)
         | apply_pattern Prop = I
-        | apply_pattern (For idents) = Seq.map_filter (move_down_for idents)
-                                       #> Seq.map move_down_trueprop
-        | apply_pattern (Term term) =
-            Seq.filter (focusterm_matches theory term) 
-            #> Seq.map_filter (find_subterm_hole term)
+        | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
+        | apply_pattern (Term term) = Seq.filter (focusterm_matches theory term) #> 
+                                      Seq.map_filter (find_subterm_hole term)
     in
       Seq.single #> fold_rev apply_pattern pattern_list
     end;
