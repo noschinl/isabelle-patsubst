@@ -59,10 +59,10 @@ struct
     let
       val cterm_of = Thm.cterm_of (Thm.theory_of_thm sub);
       val fun_t = fun_ct |> Thm.term_of;
-      val rule = @{thm arg_cong};
       val sub_concl = sub |> Thm.prop_of |> Logic.strip_imp_concl;
       val (l, r) = sub_concl |> Logic.dest_equals;
       val needed_rule = Logic.mk_implies (sub_concl, (Logic.mk_equals (fun_t $ l, fun_t $ r)));
+      val rule = @{thm arg_cong};
       val instantiation = Thm.match (rule |> Thm.cprop_of, needed_rule |> cterm_of);
       val instantiated_rule = Thm.instantiate instantiation rule;
     in
@@ -73,10 +73,10 @@ struct
     let
       val cterm_of = Thm.cterm_of (Thm.theory_of_thm sub);
       val arg_t = arg_ct |> Thm.term_of;
-      val rule = @{thm fun_cong};
       val sub_concl = sub |> Thm.prop_of |> Logic.strip_imp_concl;
       val (l, r) = sub_concl |> Logic.dest_equals;
       val needed_rule = Logic.mk_implies (sub_concl, (Logic.mk_equals (l $ arg_t, r $ arg_t)));
+      val rule = @{thm fun_cong};
       val instantiation = Thm.match (rule |> Thm.cprop_of, needed_rule |> cterm_of);
       val instantiated_rule = Thm.instantiate instantiation rule;
     in
@@ -103,17 +103,17 @@ struct
 
       fun find_vars (v as (Var _)) = [v]
         | find_vars (l $ r) = union (find_vars l) (find_vars r)
-        | find_vars (Abs (_, _, a)) = (find_vars a)
+        | find_vars (Abs (_, _, a)) = find_vars a
         | find_vars _ = [];
         
-      fun find_instantiation (var as (Var ((n, _), t))) (vnames, ctxt) =
+      fun find_instantiation var (vnames, ctxt) =
         let
+          val ((n, _), t) = Term.dest_Var var;
           val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
           val (n', ctxt') = yield_singleton Variable.variant_fixes n ctxt;
         in
           ((var |> cterm_of, Free (n', t) |> cterm_of) :: vnames, ctxt')
-        end
-        | find_instantiation _ _ = error "Wrong parameter!";
+        end;
 
       (* Find the set of schematic variables in the premises of thm. *)
       val vars_in_prems = fold (find_vars #> union) (Thm.prems_of thm) [];
@@ -126,17 +126,10 @@ struct
   
   (* Generalize the previously introduced free variables back into schematic variables. *)
   fun generalize_vars_back instantiation thm =
-    let
-      fun generalization_of (_, cfree) =
-        case cfree |> Thm.term_of of
-          Free (s, _) => s
-        | _ => error "Wrong parameter!";
-     in
-       Drule.generalize ([], map generalization_of instantiation) thm
-     end;            
-
-  (* Replace any occurrence of the bound variable in the hypothesis
-     by an all-quantified variable. *)
+    Drule.generalize ([], map (#2 #> Thm.term_of #> dest_Free #> #1) instantiation) thm;
+  
+  (* Replace any occurrence of the bound variable
+     in the hypothesis by an all-quantified variable. *)
   fun forall_intr_var cvar thm =
     let
       val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
