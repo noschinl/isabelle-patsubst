@@ -92,27 +92,36 @@ struct
         in SOME (sub, below_abs conversion, ((name, typ) :: bound_vars), new_idents) : focusterm option end
     | move_down_abs _ _ = NONE;
     
-  (* Move to B in !!x1 ... xn. B. *)
-  fun move_down_params idents (ft as (t, _, _, _) : focusterm) =
+  (* Move to B in !!x_1 ... x_n. B. *)
+  fun move_down_params (ft as (t, _, _, _) : focusterm) =
+    if Logic.is_all t 
+    then ft
+         |> move_down_right |> Option.valOf
+         |> move_down_abs NONE |> Option.valOf
+         |> move_down_params
+    else ft;
+    
+  (* Move to B in !!x_1 ... x_n. B.
+     Intoduce identifers i_1 .. i_k for x_(n-k+1) .. x_n*)
+  fun move_down_for idents (ft as (t, _, _, _) : focusterm) =
     let
+      fun recurse ident idents =
+        move_down_right #> Option.valOf
+        #> move_down_abs ident #> Option.valOf
+        #> move_down_for idents
+        
       fun count_alls term =
         if Logic.is_all term 
         then 1 + count_alls (Logic.dest_all term |> #2)
         else 0;
+        
       val num_alls = count_alls t;
-      val num_idents = length idents;
-      val _ = if num_idents > num_alls then error "Too many identifiers!" else ();
     in
-      if num_alls = 0 then ft
-      else (if num_alls = num_idents
-           then ft
-             |> move_down_right |> Option.valOf
-             |> move_down_abs (idents |> hd |> SOME) |> Option.valOf
-             |> move_down_params (tl idents)
-           else ft
-             |> move_down_right |> Option.valOf
-             |> move_down_abs NONE |> Option.valOf
-             |> move_down_params idents)
+      if num_alls = 0 andalso length idents = 0  then SOME ft
+      else case Int.compare(num_alls, length idents) of
+             EQUAL   => recurse (idents |> hd |> SOME) (tl idents) ft
+           | GREATER => recurse NONE idents ft
+           | LESS    => NONE
     end;
     
   (* Move to B in A1 ==> ... ==> An ==> B. *)
@@ -128,6 +137,12 @@ struct
         Seq.cons (ft |> move_down_left |> Option.valOf |> move_down_right |> Option.valOf)
                  (move_down_assms (move_down_right ft |> Option.valOf))
     | _ =>  Seq.empty;
+  
+  (* TODO: This isn't logic agnostic, can I improve this? *)
+  fun move_down_trueprop (ft as (t, _, _, _) : focusterm) =
+    case t of
+      Const ("HOL.Trueprop", _) $ _ => ft |> move_down_right |> Option.valOf
+    | _ =>  ft;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
@@ -238,13 +253,14 @@ struct
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = I
         | apply_pattern In = Seq.maps valid_match_points
-        | apply_pattern Asm = Seq.map (move_down_params [])
-                              #> Seq.maps move_down_assms 
-                              #> Seq.map_filter move_down_right
-        | apply_pattern Concl = Seq.map (move_down_params [] #> move_down_concl)
-                                #> Seq.map_filter move_down_right
+        | apply_pattern Asm = Seq.map move_down_params
+                              #> Seq.maps move_down_assms
+                              #> Seq.map move_down_trueprop
+        | apply_pattern Concl = Seq.map (move_down_params #> move_down_concl)
+                                #> Seq.map move_down_trueprop
         | apply_pattern Prop = I
-        | apply_pattern (For idents) = Seq.map (move_down_params idents)
+        | apply_pattern (For idents) = Seq.map_filter (move_down_for idents)
+                                       #> Seq.map move_down_trueprop
         | apply_pattern (Term term) =
             Seq.filter (focusterm_matches theory term) 
             #> Seq.map_filter (find_subterm_hole term)
@@ -314,7 +330,7 @@ struct
   
   fun distinct_subgoals th = the_default th (SINGLE distinct_subgoals_tac th);
 
-  (* PatSubst tactics. *)
+  (* PatSubst tactic. *)
   fun patsubst_tac ctxt pattern thms i th =
     Seq.of_list thms
     |> Seq.maps (prep_meta_eq ctxt #> Seq.of_list)

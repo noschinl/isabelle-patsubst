@@ -25,7 +25,7 @@ fixes f :: "nat \<Rightarrow> nat"
 shows "f x = P (\<lambda>(x::nat). 3 + x + y)"
 (* It also works below abstractions, even when there are free schematic variables. *)
 (* Unfortunately, the generated variable names are not very pretty. *)
-apply(pat_subst at "3 + _"  test_theorem)
+apply(pat_subst at "3 + _" test_theorem)
 oops
 
 (* First, some very basic pattern based rewriting. Rewriting is completely done via conversions. *)
@@ -70,12 +70,9 @@ oops
 
 
 (* Instantiation.
-   Since all rewriting is now done via conversions, instantiation becomes fairly easy to do.
-   Unfortunately, the term that we instantiate with has to have type annotations,
-   or otherwise instantition will not work. There is probably a way to automatically infer at
-   least some of the types in the term. *)
 
-(* First, a simple test case. *)
+   Since all rewriting is now done via conversions, instantiation becomes fairly easy to do.
+   First, a simple test case. *)
 
 (* We first introduce a function f and an extended version of f that is annotated with an invariant. *)
 fun f :: "nat \<Rightarrow> nat" where "f n = n"
@@ -102,6 +99,13 @@ lemma "\<And>(x::int) y z. x + y + z = z + y + x"
 apply(pat_subst at "x + y" in "x + y + z" in concl for (x y z) add_commute)
 apply(pat_subst at "y + _ + z" in concl for (y z) add_commute)
 apply(pat_subst at "_" in concl for () add_commute)
+apply(simp)
+done
+
+(* It can be used anywhere in the pattern where there is an \<And>-Quantifier.
+   TODO: This is still a little awkward. *)
+lemma "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
+apply(pat_subst at "x + 1" in goal for(x) at asm add_commute)
 apply(simp)
 done
 
