@@ -5,80 +5,59 @@ begin
 (* Implementation of the conversion package that
    adds support for conditional rewrite rules.*)
    
-(* TODO: Remove these rules. The code should not depend on them. *)
-lemma fun_cong: "(f \<equiv> g) \<Longrightarrow> (f s \<equiv> g s)" by simp
-lemma arg_cong: "(s \<equiv> t) \<Longrightarrow> (f s \<equiv> f t)" by simp
-
-ML {*
-val combination_thm =
-  let
-    val fg = @{cprop "f :: 'a \<Rightarrow> 'b \<equiv> g :: 'a \<Rightarrow> 'b"};
-    val st = @{cprop "s :: 'a \<equiv> t :: 'a"};
-    val fgthm = Thm.assume fg;
-    val stthm = Thm.assume st;
-    val thm = Thm.implies_intr fg (Thm.implies_intr st (Thm.combination fgthm stthm))
-  in Drule.export_without_context thm end;
-
-val abstract_rule_thm =
-  let
-    val eq = @{cprop "\<And>x :: 'a. s x \<equiv> t x"}
-    val x = @{cterm "x :: 'a"}
-    val thm = eq
-      |> Thm.assume
-      |> Thm.forall_elim x
-      |> Thm.abstract_rule "x" x
-      |> Thm.implies_intr eq
-  in Drule.export_without_context thm end;
-*}
-
-ML {*
-  val p = @{prop "P x"}
-  val t = Object_Logic.drop_judgment @{theory} p
-  val i = Object_Logic.is_judgment @{theory} p
-  val p' = Object_Logic.ensure_propT @{theory} t
-*}
-ML Object_Logic.add_judgment_cmd
-lemma X: "(\<And>x. s x \<equiv> t x) \<Longrightarrow> \<lambda>x. s x \<equiv> \<lambda>x. t x" using [[simp_trace]] by simp
-lemma Y: "P \<Longrightarrow> 1 + x \<equiv> x + (1 :: nat)" by arith
-declare [[eta_contract=false]]
-thm X[of "\<lambda>x. 1 + x", OF Y]
-
-ML {*
-fun judgment_conv cv ct =
-  if Object_Logic.is_judgment (Thm.theory_of_cterm ct) (Thm.term_of ct)
-  then Conv.arg_conv cv ct
-  else cv ct
-*}
-
-ML {* val t = @{cpat "op ==>"} *}
-no_notation Trueprop ("(_)" 5)
-ML t
-
-
 ML {*
 signature CCONV =
 sig
   val no_conv : conv
   val all_conv : conv
+  val abs_conv: (cterm * Proof.context -> conv) -> Proof.context -> conv
+  val combination_conv: conv -> conv -> conv
+  val comb_conv: conv -> conv
+  val arg_conv: conv -> conv
+  val fun_conv: conv -> conv
   val arg1_conv: conv -> conv
   val fun2_conv: conv -> conv
   val rewr_conv : thm -> conv
   val params_conv: int -> (Proof.context -> conv) -> Proof.context -> conv
   val prems_conv: int -> conv -> conv
   val concl_conv: int -> conv -> conv
-  val arg_conv: conv -> conv
-  val fun_conv: conv -> conv
-  val abs_conv: (cterm * Proof.context -> conv) -> Proof.context -> conv
   val fconv_rule: conv -> thm -> thm
   val gconv_rule: conv -> int -> thm -> thm
 end;
 
 structure CConv : CCONV =
 struct
+  (* Congruence rules used to apply conversions to subterms.*)
+  local
+    val certify = Thm.cterm_of @{theory}
+    val read_term = certify o Simple_Syntax.read_term;
+    val read_prop = certify o Simple_Syntax.read_prop;
+  in
+    fun transitive th1 th2 = Drule.transitive_thm OF [th1, th2];
+  
+    val combination_thm =
+      let
+        val fg = read_prop "f :: 'a => 'b == g :: 'a => 'b";
+        val st = read_prop "s :: 'a == t :: 'a";
+        val fgthm = Thm.assume fg;
+        val stthm = Thm.assume st;
+        val thm = Thm.implies_intr fg (Thm.implies_intr st (Thm.combination fgthm stthm))
+      in Drule.export_without_context thm end;
+      
+    fun abstract_rule_thm n =
+      let
+        val eq = read_prop "!!x :: 'a. (s :: 'a => 'b) x == (t :: 'a => 'b) x";
+        val x = read_term "x :: 'a";
+        val thm = eq
+          |> Thm.assume
+          |> Thm.forall_elim x
+          |> Thm.abstract_rule n x
+          |> Thm.implies_intr eq
+      in Drule.export_without_context thm end;
+  end;
+  
   val no_conv = Conv.no_conv;
   val all_conv = Conv.all_conv;
-
-  fun transitive th1 th2 = Drule.transitive_thm OF [th1, th2]
   
   (* Rewrite conversion intended to work with conditional rules. *)
   fun rewr_conv rule ct =
@@ -98,120 +77,59 @@ struct
     in
       transitive rule4 (Thm.beta_conversion true (rhs_of rule4))
     end;
-  
-  (* TODO: add_arg and add_fun are ugly and verbose. Make them simpler. *)
-  fun add_fun sub fun_ct =
-    let
-      val cterm_of = Thm.cterm_of (Thm.theory_of_thm sub);
-      val fun_t = fun_ct |> Thm.term_of;
-      val sub_concl = sub |> Thm.prop_of |> Logic.strip_imp_concl;
-      val (l, r) = sub_concl |> Logic.dest_equals;
-      val needed_rule = Logic.mk_implies (sub_concl, (Logic.mk_equals (fun_t $ l, fun_t $ r)));
-      val rule = @{thm arg_cong};
-      val instantiation = Thm.match (rule |> Thm.cprop_of, needed_rule |> cterm_of);
-      val instantiated_rule = Thm.instantiate instantiation rule;
-    in
-      sub RS instantiated_rule
-    end;
     
-  fun add_arg sub arg_ct =
-    let
-      val cterm_of = Thm.cterm_of (Thm.theory_of_thm sub);
-      val arg_t = arg_ct |> Thm.term_of;
-      val sub_concl = sub |> Thm.prop_of |> Logic.strip_imp_concl;
-      val (l, r) = sub_concl |> Logic.dest_equals;
-      val needed_rule = Logic.mk_implies (sub_concl, (Logic.mk_equals (l $ arg_t, r $ arg_t)));
-      val rule = @{thm fun_cong};
-      val instantiation = Thm.match (rule |> Thm.cprop_of, needed_rule |> cterm_of);
-      val instantiated_rule = Thm.instantiate instantiation rule;
-    in
-      sub RS instantiated_rule
-    end;
-  
-  (* TODO: Try to implement a combination conversion and
-           reduce fun_conv and arg_conv to special cases. *)
-  fun fun_conv conversion cterm =
+  fun combination_conv cv1 cv2 cterm =
     let val (l, r) = Thm.dest_comb cterm;
-    in add_arg (conversion l) r end;
+    in combination_thm OF [cv1 l, cv2 r] end;
+
+  fun comb_conv cv = combination_conv cv cv;
+
+  fun fun_conv conversion =
+    combination_conv conversion all_conv;
     
-  fun arg_conv conversion cterm =
-    let val (l, r) = Thm.dest_comb cterm;
-    in add_fun (conversion r) l end;
-
-  (* Instantiate all schematic vars in the theorem's premises
-     with appropriately named free variables.
-     After this, it becomes possible to move the premises into
-     the theorem's hypothesis.*)
-  fun inst_vars_in_prems ctxt thm =
-    let
-      val union = union (op= : (term * term) -> bool);
-
-      fun find_vars (v as (Var _)) = [v]
-        | find_vars (l $ r) = union (find_vars l) (find_vars r)
-        | find_vars (Abs (_, _, a)) = find_vars a
-        | find_vars _ = [];
-        
-      fun find_instantiation var (vnames, ctxt) =
-        let
-          val ((n, _), t) = Term.dest_Var var;
-          val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
-          val (n', ctxt') = yield_singleton Variable.variant_fixes n ctxt;
-        in
-          ((var |> cterm_of, Free (n', t) |> cterm_of) :: vnames, ctxt')
-        end;
-
-      (* Find the set of schematic variables in the premises of thm. *)
-      val vars_in_prems = fold (find_vars #> union) (Thm.prems_of thm) [];
-      (* Then instantiate them with fresh free variables. *)
-      val (instantiation, ctxt') =  fold find_instantiation vars_in_prems ([], ctxt);
-      val inst_thm = Thm.instantiate ([], instantiation) thm;
-    in
-      (inst_thm, instantiation, ctxt')
-    end;
-  
-  (* Generalize the previously introduced free variables back into schematic variables. *)
-  fun generalize_vars_back instantiation thm =
-    Drule.generalize ([], map (#2 #> Thm.term_of #> dest_Free #> #1) instantiation) thm;
-  
-  (* Replace any occurrence of the bound variable
-     in the hypothesis by an all-quantified variable. *)
-  fun forall_intr_var cvar thm =
-    let
-      val cterm_of = Thm.cterm_of (Thm.theory_of_thm thm);
-      val prems = Thm.prems_of thm;
-      val forall_intro_prems = map (fn prem =>
-          (* TODO: This is ugly, there must be an easier way to accomplish this. *)
-          (prem |> Logic.all (Thm.term_of cvar) |> cterm_of |> Thm.assume) COMP @{thm Pure.meta_spec}
-        ) prems;
-      fun discharge_prem prem thm = thm OF [prem];
-    in
-      thm |> fold discharge_prem forall_intro_prems 
-    end;
+  fun arg_conv conversion =
+    combination_conv all_conv conversion;
   
   (* We also need to extend abs_conv to work with conditional rules. *)
   fun abs_conv cv ctxt ct =
     (case Thm.term_of ct of
        Abs (x, _, _) =>
          let
+           (* Instantiate the rule properly and apply it to the eq theorem. *)
+           fun abstract_rule u v eq = 
+             let
+               (* Take a variable v and an equality theorem of form:
+                    P1 ==> ... ==> Pn ==> L v == R v
+                  And build a term of form:
+                    !!v. (%x. L x) v == (%x. R x) v *)
+               fun mk_concl var eq =
+                 let
+                   val certify = Thm.cterm_of (Thm.theory_of_thm eq);
+                   fun abs term = (Term.lambda var term) $ var;
+                   fun equals_cong f t =
+                     Logic.dest_equals t
+                     |> (fn (a, b) => (f a, f b))
+                     |> Logic.mk_equals
+                 in
+                   Thm.concl_of eq
+                   |> equals_cong abs
+                   |> Logic.all var |> certify
+                 end;
+               val rule = abstract_rule_thm x;
+               val inst = Thm.match (Drule.cprems_of rule |> hd, mk_concl (Thm.term_of v) eq);
+             in
+               (Drule.instantiate_normalize inst rule OF [Drule.generalize ([], [u]) eq])
+               |> Drule.zero_var_indexes
+             end;
+           
+           (* Destruct the abstraction and apply the conversion. *)
            val (u, ctxt') = yield_singleton Variable.variant_fixes Name.uu ctxt;
            val (v, ct') = Thm.dest_abs (SOME u) ct;
            val eq = cv (v, ctxt') ct';
-           
-           fun abstract_rule eq =
-             let              
-               val (eq_no_vars_in_prems, inst, _) = inst_vars_in_prems ctxt' eq;
-             in
-              eq_no_vars_in_prems
-              |> forall_intr_var v
-              |> Thm.abstract_rule x v
-              |> Drule.implies_intr_hyps
-              |> generalize_vars_back inst
-              |> Drule.zero_var_indexes
-             end;
          in
            if Thm.is_reflexive eq
            then all_conv ct
-           else abstract_rule eq
+           else abstract_rule u v eq
          end
      | _ => raise CTERM ("abs_conv", [ct]));
   
