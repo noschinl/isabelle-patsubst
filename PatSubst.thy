@@ -31,12 +31,9 @@ struct
   (* Some types/terminology used in the code below: *)
 
   (* We rewrite subterms using rewrite conversions. These are conversions
-     that also take a context and a list of variables bound at the
-     current subterm as parameters. For example, a simple rewrite conversion
-     would be: fn _ => fn _ => CConv.rewr_conv @{thm add_commute};
-     This ignores its parameters and tries to rewrite a goal's toplevel
-     using the rule add_commute. *)
-  type rewrite_conv = Proof.context -> cterm list -> conv;
+     that also take a context and a list of identifiers for bound variables
+     as parameters. *)
+  type rewrite_conv = Proof.context -> (string * term) list -> conv;
 
   (* To apply such a rewrite conversion to a subterm of our goal, we use
      subterm positions, which are just functions that map a rewrite conversion,
@@ -49,27 +46,21 @@ struct
      rewrite this subterm. *)
   type subterm_position = rewrite_conv -> rewrite_conv;
 
-  type bound_var = string * typ;
-  type indentifier = string * int;
-
- (* A focusterm represents a subterm, is a 4-tuple (t, p, b, i) consisting of:
-    - The subterm t itself.
-    - A subterm position p, which is a function that can be used to create a
-      conversion to rewrite this subterm.
-    - The list of bound variables b in the subterm that belong to
-      abstractions in its context.
-    - A list of identifiers i for bound variables introduced by the user.
-      Each identifier consists of a name and an index. The index is counted
-      from the back of the bounds list. *)
-  type focusterm = term * subterm_position * bound_var list * indentifier list
+ (* A focusterm represents a subterm. It is a tuple (t, p), consisting
+    of the subterm t itself and its subterm position p. *)
+  type focusterm = term * subterm_position
 
   (* changes object "=" to meta "==" which prepares a given rewrite rule. *)
   fun prep_meta_eq ctxt =
     Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
 
-  (* Functions for modifying subterm contexts. *)
-  fun below_abs (outer : subterm_position) : subterm_position = 
-    let fun inner rewr ctxt bounds = CConv.abs_conv (fn (ct, ctxt) => rewr ctxt (ct::bounds)) ctxt;
+  (* Functions for modifying subterm positions.
+     These build on the conditional conversion package. *)
+  fun below_abs ident (outer : subterm_position) : subterm_position = 
+    let
+      fun add_ident NONE _ l = l
+        | add_ident (SOME name) ct l = (name, Thm.term_of ct) :: l;
+      fun inner rewr ctxt idents = CConv.abs_conv (fn (ct, ctxt) => rewr ctxt (add_ident ident ct idents)) ctxt;
     in inner #> outer end;
   fun below_left (outer : subterm_position) : subterm_position =
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.fun_conv;
@@ -79,21 +70,25 @@ struct
     in inner #> outer end;
 
   (* Functions for moving down through focusterms. *)
-  fun move_below_left (((l $ _), conversion, bound_vars, idents) : focusterm) =
-        (l, below_left conversion, bound_vars, idents) : focusterm
+  fun move_below_left (((l $ _), conversion) : focusterm) =
+        (l, below_left conversion) : focusterm
     | move_below_left ft = raise TERM ("move_below_left", [#1 ft]);
-  fun move_below_right (((_ $ r), conversion, bound_vars, idents) : focusterm) =
-        (r, below_right conversion, bound_vars, idents) : focusterm
+  fun move_below_right (((_ $ r), conversion) : focusterm) =
+        (r, below_right conversion) : focusterm
     | move_below_right ft = raise TERM ("move_below_right", [#1 ft]);
-  fun move_below_abs ident ((Abs (name, typ, sub), conversion, bound_vars, idents) : focusterm) =
-        (* If the user supplied an identifier for the variable bound by
-           this abstraction, then remember it. *)
-        let val new_idents = if is_some ident then (the ident, length bound_vars) :: idents else idents;
-        in (sub, below_abs conversion, ((name, typ) :: bound_vars), new_idents) : focusterm end
+  fun move_below_abs ident ((Abs (_, typ, sub), conversion) : focusterm) =
+        let
+          (* We don't keep loose bounds in our terms, replace them by free variables.
+             Either use the identifier supplied by the user, or use a dummy name. *)
+          (* TODO: Rename any old occurrences of the new identifier.
+                   The new identifier should always take precedence. *)
+          val new_ident = Option.getOpt (ident, "__dummy__");
+          val replace_bound = curry Term.subst_bound (Free (new_ident, typ)); 
+        in (replace_bound sub, below_abs NONE conversion) : focusterm end
     | move_below_abs _ ft = raise TERM ("move_below_abs", [#1 ft]);
     
   (* Move to B in !!x_1 ... x_n. B. *)
-  fun move_below_params (ft as (t, _, _, _) : focusterm) =
+  fun move_below_params (ft as (t, _) : focusterm) =
     if Logic.is_all t 
     then ft
          |> move_below_right
@@ -103,7 +98,7 @@ struct
     
   (* Move to B in !!x_1 ... x_n. B.
      Intoduce identifers i_1 .. i_k for x_(n-k+1) .. x_n*)
-  fun move_below_for idents (ft as (t, _, _, _) : focusterm) =
+  fun move_below_for idents (ft as (t, _) : focusterm) =
     let
       fun recurse ident idents =
         move_below_right
@@ -125,13 +120,13 @@ struct
     end;
     
   (* Move to B in A1 ==> ... ==> An ==> B. *)
-  fun move_below_concl (ft as (t, _, _, _) : focusterm) =
+  fun move_below_concl (ft as (t, _) : focusterm) =
     case t of
       (Const ("==>", _) $ _) $ _ => ft |> move_below_right |> move_below_concl
     | _ =>  ft;
     
   (* Move to the A's in A1 ==> ... ==> An ==> B. *)
-  fun move_below_assms (ft as (t, _, _, _) : focusterm) =
+  fun move_below_assms (ft as (t, _) : focusterm) =
     case t of
       (Const ("==>", _) $ _) $ _ =>
         Seq.cons (ft |> move_below_left |> move_below_right)
@@ -139,14 +134,14 @@ struct
     | _ =>  Seq.empty;
   
   (* Descend below a judment, if there is one. *)
-  fun move_below_judgment theory (ft as (t, _, _, _) : focusterm) =
+  fun move_below_judgment theory (ft as (t, _) : focusterm) =
     if Object_Logic.is_judgment theory t
     then ft |> move_below_right
     else ft;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
-  fun find_subterms condition (focusterm as (subterm, _, _, _) : focusterm) =
+  fun find_subterms condition (focusterm as (subterm, _) : focusterm) =
     let
       val recurse = find_subterms condition;    
       val recursive_matches = case subterm of
@@ -163,11 +158,8 @@ struct
     end;
 
   (* Match a focusterm against a pattern. *)
-  fun focusterm_matches theory pattern ((subterm , _, bounds, idents) : focusterm) =
+  fun focusterm_matches theory pattern ((subterm , _) : focusterm) =
     let
-      (* Wraps a list of abstractions around a term. *)
-      fun fix_dangling_bounds bounds term = fold (#2 #> Term.absdummy) bounds term;
-
       (* We want schematic variables in our pattern to match subterms that
          contain dangling bounds. To achieve this, we parametrize them with
          all the bounds in their context. *)
@@ -178,27 +170,8 @@ struct
         | parametrize_vars Ts (l $ r) =
             parametrize_vars Ts l $ parametrize_vars Ts r
         | parametrize_vars _ t = t;
-
-      (* The user might have introduced identifiers for bound variables. We
-         get a list of these identifiers, which are 2-tuples (name, rel_index).
-         Any occurrence of an identifier in the pattern will be replaced by
-         its respective bound variable. *)
-      fun replace_known_identifiers idents term =
-        let
-          fun bruijn rel = length bounds - rel - 1;
-          fun replace name (Abs (n, t, s)) i = Abs (n, t, replace name s (i+1))
-            | replace name (Free (n, t)) i = if n = name andalso i >= 0 then Bound i else Free (n, t)
-            | replace name (l $ r) i = replace name l i $ replace name r i
-            | replace _ t _ = t;
-          fun replace_identifier (name, rel) term = replace name term (bruijn rel);
-        in
-          fold replace_identifier idents term
-        end;
-
-      val fix_pattern = replace_known_identifiers idents #> fix_dangling_bounds bounds #> parametrize_vars [];
-      val fix_subterm = fix_dangling_bounds bounds;
     in
-      Pattern.matches theory (fix_pattern pattern, fix_subterm subterm)
+      Pattern.matches theory (parametrize_vars [] pattern, subterm)
     end;
 
   (* Find all subterms that might be a valid point to apply a rule. *)
@@ -219,24 +192,19 @@ struct
          pattern that describes it until you find the schematic variable 
          that corresponds to the supplied Var term. *)
       fun find_var varname pattern focusterm =
-        let
-          fun find_var_maybe pattern focusterm =
-            (case pattern of
-               Abs (n, _, sub) => find_var_maybe sub (move_below_abs (SOME n) focusterm)
-             | l $ r =>
-                 let val left = find_var_maybe l (move_below_left focusterm);
-                 in if is_some left
-                    then left
-                    else find_var_maybe r (move_below_right focusterm)
-                 end
-            | Var ((name, _), _) => 
-                if varname = name
-                then SOME focusterm
-                else NONE
-            | _ => NONE) handle TERM _ => NONE;
-        in
-          find_var_maybe pattern focusterm
-        end;
+        (case pattern of
+           Abs (n, _, sub) => find_var varname sub (move_below_abs (SOME n) focusterm)
+         | l $ r =>
+             let val left = find_var varname l (move_below_left focusterm);
+             in if is_some left
+                then left
+                else find_var varname r (move_below_right focusterm)
+             end
+        | Var ((name, _), _) => 
+            if varname = name
+            then SOME focusterm
+            else NONE
+        | _ => NONE) handle TERM _ => NONE;
 
       fun find_subterm_hole pattern =
         let
@@ -258,35 +226,28 @@ struct
         | apply_pattern Prop = I
         | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
         | apply_pattern (Term term) = Seq.filter (focusterm_matches theory term) #> 
-                                      Seq.map_filter (find_subterm_hole term)
+                                      Seq.map_filter (find_subterm_hole term);
     in
       Seq.single #> fold_rev apply_pattern pattern_list
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
-  fun inst_thm _ _ _ NONE thm = thm
-    | inst_thm ctxt bounds idents (SOME insts) thm =
+  fun inst_thm _ _ NONE thm = thm
+    | inst_thm ctxt idents (SOME insts) thm =
       let
         (* Replace any identifiers with their corresponding bound variables. *)
-        val rewrite_bounds = let
-          (* Apply a function f : "term -> term" recursively to every subterm. *)
-          fun apply_rec f (Abs (n, t, s)) = f (Abs (n, t, apply_rec f s))
-            | apply_rec f (l $ r) = f (apply_rec f l $ apply_rec f r)
-            | apply_rec f t = f t;
-          (* Prepare a list of identifiers and corresponding terms. *)
-          val index_to_term = nth (rev bounds) #> Thm.term_of;
-          val indent_substs = map (apsnd index_to_term) idents;
-          fun subst [] t = t
-            | subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
-            | subst _ t = t;
-        in
-          apply_rec (subst indent_substs)
-        end;
+        val rewrite_bounds =
+          let
+            fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
+              | subst _ t = t;
+          in
+            Term.map_aterms (subst idents)
+          end;
     
         (* Try to find the schematic variable, that we want to instantiate,
            in the theorem. *)
         fun find_var thm (varname, _) = 
-          find_subterms (fn (Var ((name, _), _), _, _, _) => name = varname | _ => false) (Thm.prop_of thm, I, [], [])
+          find_subterms (fn (Var ((name, _), _), _) => name = varname | _ => false) (Thm.prop_of thm, I)
           |> Seq.hd |> #1
           handle Option.Option => error ("Could not find variable " ^ varname ^ " in the rewritten subterm.");
     
@@ -315,10 +276,9 @@ struct
     let
       val theory = Thm.theory_of_thm th;
       val goal = Logic.get_goal (Thm.prop_of th) i;
-      val matches = find_matches theory pattern (goal, I, [], []);
-      fun rewrite_conv rule inst idents ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds idents inst rule);
-      (* TODO: The subterm position should implicitly carry the ctxt and identifiers. *)
-      fun subst (_, position, _, idents) = CCONVERSION (position (rewrite_conv rule inst idents) ctxt []) i th;
+      val matches = find_matches theory pattern (goal, I);
+      fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
+      fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i th;
     in
       Seq.maps subst matches
     end;
