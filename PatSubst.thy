@@ -184,6 +184,23 @@ struct
     in
       find_subterms (#1 #> is_valid)
     end;
+    
+  val hole_name = "HOLE";
+  fun is_hole (Var ((name, _), _)) = (name = hole_name)
+    | is_hole _ = false;
+  
+  (* Get a list of all identifiers introduced on the way to the hole. *)
+  fun collect_identifiers (Abs (n, t, a)) = 
+        Option.map (curry op:: (n, t)) (collect_identifiers a)
+    | collect_identifiers (l $ r) = 
+        let
+          val left_idents = collect_identifiers l
+        in
+          if Option.isSome left_idents
+          then left_idents
+          else collect_identifiers r
+        end
+    | collect_identifiers term = if is_hole term then SOME [] else NONE;
 
   (* Find a subterm of the focusterm matching the pattern. *)
   fun find_matches theory pattern_list =
@@ -207,15 +224,9 @@ struct
         | _ => NONE) handle TERM _ => NONE;
 
       fun find_subterm_hole pattern =
-        let
-          val hole = "HOLE";
-          fun is_hole (Var ((name, _), _)) = (name = hole)
-            | is_hole _ = false;
-        in
-          if Term.exists_subterm is_hole pattern
-          then find_var hole pattern
-          else SOME
-        end;
+        if Term.exists_subterm is_hole pattern
+        then find_var hole_name pattern
+        else SOME;
 
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = Seq.map (move_below_judgment theory)
@@ -299,52 +310,114 @@ struct
       fun to_method f a b c = SIMPLE_METHOD' (f a b c);
       val patsubst_meth = to_method patsubst_tac;
       
-      val pattern_parser =
+      (* The pattern parser, parses a list of pattern elements. *)
+      val pattern_parser : pattern list context_parser =
         let
-          (* Normally, we would use Proof_Context.read_term_pattern to parse
-             our patterns. But unfortunately, it treats dummy variables and
-             true schematic variables differently. Since we do not want to
-             make a distinction between them in our matching code, we handle
-             some of the parsing work ourselves. This is actually not that bad,
-             since we might need to do this anyway, if we ever introduce a
-             dedicated constant to represent subterm holes in our patterns. *)
-          fun read_pattern ctxt =
+          (* We need to parse the terms in our patterns from right to left,
+             so we first parse them as a list of tokens that we can later process from right to left.*)
+          datatype pattern_token = PairToken of string * string | ForToken of string list;
+          val tokenizer : pattern_token list parser =
             let
-              fun replace_dummy i (Const ("dummy_pattern", T)) =
-                    (Var (("_dummy_", i), T), i+1)
-                | replace_dummy i (Abs (x, T, t)) =
-                    let val (t', i') = replace_dummy i t;
-                    in (Abs (x, T, t'), i') end
-                | replace_dummy i (l $ r) =
-                    let val (l', i')  = replace_dummy i l;
-                        val (r', i'') = replace_dummy i' r;
-                    in (l' $ r', i'') end
-                | replace_dummy i t = (t, i);
-              val replace_dummy_patterns = replace_dummy 0 #> #1;
+              val keyword_reader = (Args.$$$ "at" || Args.$$$ "in");
+              val atom_reader = (Args.$$$ "asm" || Args.$$$ "concl" || Args.$$$ "goal") || Parse.term
+              val for_reader = Args.$$$ "for" |-- Args.parens (Scan.repeat (Scan.unless keyword_reader Args.name));
             in
-              Syntax.parse_term ctxt #>
-              replace_dummy_patterns #>
-              Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_pattern ctxt)
+              Scan.repeat ((for_reader >> ForToken) || (keyword_reader -- atom_reader >> PairToken))
+            end;
+            
+          val context_tokenzier = Scan.lift tokenizer #> (fn (r, (ctxt, ts)) => ((Context.proof_of ctxt, r), (ctxt, ts)))
+          
+          fun tokens_to_patterns (ctxt, token_list) =
+            let
+              (* While parsing the patterns, we need to add fixes for the introduced identifiers,
+                 so that they are highlighted properly in jEdit. During this, we need to pass a
+                 context and a list of identifier name pairs around. *)
+              type mappings = (string * string) list;
+              type fixes_info = Proof.context * mappings;
+              val get_ctxt : fixes_info -> Proof.context = #1;
+              val get_mappings : fixes_info -> mappings = #2;
+            
+              (* Takes a list of identifiers and information about the previously introduced fixes
+                 and adds new fixes for those identifiers. *)
+              fun add_fixes (idents : string list) ((ctxt, mappings) : fixes_info) =
+                let
+                  fun to_raw_var name = (Binding.name name, NONE, NoSyn);
+                  val (new_idents, ctxt') = Proof_Context.add_fixes (map to_raw_var idents) ctxt
+                  val mappings' = mappings @ (idents ~~ new_idents)
+                in
+                  (ctxt', mappings') : fixes_info
+                end;
+            
+              (* Normally, we would use Proof_Context.read_term_pattern to parse
+                 our patterns. But unfortunately, it treats dummy variables and
+                 true schematic variables differently. Since we do not want to
+                 make a distinction between them in our matching code, we handle
+                 some of the parsing work ourselves. This is actually not that bad,
+                 since we might need to do this anyway, if we ever introduce a
+                 dedicated constant to represent subterm holes in our patterns. *)
+              fun read_pattern info string =
+                let                       
+                  fun replace_dummy i (Const ("dummy_pattern", T)) =
+                        (Var (("_dummy_", i), T), i+1)
+                    | replace_dummy i (Abs (x, T, t)) =
+                        let val (t', i') = replace_dummy i t;
+                        in (Abs (x, T, t'), i') end
+                    | replace_dummy i (l $ r) =
+                        let val (l', i')  = replace_dummy i l;
+                            val (r', i'') = replace_dummy i' r;
+                        in (l' $ r', i'') end
+                    | replace_dummy i t = (t, i);
+                  val replace_dummy_patterns = replace_dummy 0 #> #1;
+                
+                  val add_pattern_fixes =
+                    collect_identifiers
+                    #> the_default []
+                    #> map (#1)
+                    #> add_fixes;
+                  
+                  (* Parse the string into a term. *)
+                  val set_mode_pattern = Proof_Context.set_mode Proof_Context.mode_pattern
+                  val ctxt = get_ctxt info;
+                  val pattern = string
+                             |> Syntax.parse_term ctxt
+                             |> replace_dummy_patterns
+                             |> Syntax.check_term (set_mode_pattern ctxt);
+                  (* Add all introduced indentifiers as fixes to the context. *)
+                  val fixes' = add_pattern_fixes pattern info
+    
+                  (* We only add the fixes to get nice highlighting in Isabelle, *)              
+                  fun rename_free (n, n') (f as Free (name, typ)) = if n' = name then Free (n, typ) else f
+                    | rename_free _ t = t;
+                  val rename_any = fold rename_free
+                  fun rename mappings = Term.map_aterms (rename_any mappings);
+                in
+                  (fixes', rename (get_mappings info) pattern)
+                end;
+             
+              fun string_to_pattern "at" (info, patterns) = (info, At :: patterns)
+                | string_to_pattern "in" (info, patterns) = (info, In :: patterns)
+                | string_to_pattern "asm" (info, patterns) = (info, Asm :: patterns)
+                | string_to_pattern "concl" (info, patterns) = (info, Concl :: patterns)
+                | string_to_pattern "goal" (info, patterns) = (info, Prop :: patterns)
+                | string_to_pattern t (info, patterns) = read_pattern info t ||> (fn t => Term t :: patterns);
+             
+              (* Translates a token to a pattern element. It also adds new fixes to the context. *)
+              fun token_to_pattern (PairToken (a, b)) c =
+                    string_to_pattern b c |> string_to_pattern a
+                | token_to_pattern (ForToken names) (s, patterns) =
+                    (add_fixes names s, For names :: patterns);
+            in
+              fold_rev token_to_pattern token_list ((ctxt, []), []) |> #2
             end;
           
-          fun parse_term ctxt = Parse.term >> (read_pattern (Context.proof_of ctxt));
-            
-          val keyword_parser = Args.$$$ "at" >> K At
-                            || Args.$$$ "in" >> K In;
-          val atom_parser = Scan.lift (Args.$$$ "asm" >> K Asm
-                                    || Args.$$$ "concl" >> K Concl
-                                    || Args.$$$ "goal" >> K Prop)
-                          || Scan.peek parse_term >> Term;
-          val for_parser = Args.$$$ "for" |-- Args.parens (Scan.repeat (Scan.unless keyword_parser Args.name)) >> For;
-                          
-          val complete_parser = Scan.repeat ((Scan.lift for_parser >> single) || (Scan.lift keyword_parser -- atom_parser >> (fn (a, b) => [a, b])));
+          (* Patterns should have an implicit in concl appended when they end in a term pattern. *)
           fun append_default [] = [In, Concl]
             | append_default patterns = 
                 case patterns |> rev |> hd of
                   Term _ => patterns @ [In, Concl]
                 | _ => patterns;
         in
-          complete_parser >> flat >> append_default
+          context_tokenzier >> tokens_to_patterns >> append_default
         end;
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
