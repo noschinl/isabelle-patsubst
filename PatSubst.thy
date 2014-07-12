@@ -185,7 +185,7 @@ struct
       find_subterms (#1 #> is_valid)
     end;
     
-  val hole_name = "HOLE";
+  val hole_name = "__HOLE__";
   fun is_hole (Var ((name, _), _)) = (name = hole_name)
     | is_hole _ = false;
   
@@ -247,7 +247,7 @@ struct
     | inst_thm ctxt idents (SOME insts) thm =
       let
         (* Replace any identifiers with their corresponding bound variables. *)
-        val rewrite_bounds =
+        val replace_identifiers =
           let
             fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
               | subst _ t = t;
@@ -271,10 +271,14 @@ struct
           let
             val var = find_var thm t1;
             val coerce = Type.constraint (Term.type_of var);
-            val check = Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_schematic ctxt);
-            val parse = Syntax.parse_term ctxt #> rewrite_bounds #> coerce #> check;
+            val check =
+             Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_schematic ctxt);
+            val parse = Syntax.parse_term ctxt #> replace_identifiers #> coerce #> check;
+            val read_term = parse t2;
+            val term_type = Term.fastype_of read_term;
+            val new_var = var |> Term.dest_Var |> (fn (n, _) => (n, term_type)) |> Var; 
           in
-            (var |> c, parse t2 |> c)
+            (new_var |> c, read_term |> c)
           end;
 
         val instantiate = Drule.instantiate_normalize ([], map (prepare thm) insts);
@@ -359,6 +363,8 @@ struct
                 let                       
                   fun replace_dummy i (Const ("dummy_pattern", T)) =
                         (Var (("_dummy_", i), T), i+1)
+                    | replace_dummy i (Const ("PatSubst.HOLE", T)) =
+                        (Var ((hole_name, i), T), i+1)
                     | replace_dummy i (Abs (x, T, t)) =
                         let val (t', i') = replace_dummy i t;
                         in (Abs (x, T, t'), i') end
@@ -430,6 +436,9 @@ struct
     end;
 end;
 *}
+
+(* I should probably declare the hole constant with Sign.declare_const somewhere inside the parser. *)
+consts HOLE :: "'a::{}" ("\<box>")
 
 setup PatSubst.setup
 
