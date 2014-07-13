@@ -84,7 +84,7 @@ struct
                    The new identifier should always take precedence. *)
           val new_ident = Option.getOpt (ident, "__dummy__");
           val replace_bound = curry Term.subst_bound (Free (new_ident, typ)); 
-        in (replace_bound sub, below_abs NONE conversion) : focusterm end
+        in (replace_bound sub, below_abs ident conversion) : focusterm end
     | move_below_abs _ ft = raise TERM ("move_below_abs", [#1 ft]);
     
   (* Move to B in !!x_1 ... x_n. B. *)

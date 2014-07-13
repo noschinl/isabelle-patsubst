@@ -3,7 +3,9 @@ imports Complex_Main PatSubst "~~/src/HOL/Library/While_Combinator"
 begin
 
 (* This file is intended to give an overview over
-   the features of the new, modified subst method. *)
+   the features of the new, modified subst method.
+   It also doubles as a test file during development,
+   so it is a little messy at some places. *)
 
 (* First, some very basic pattern based rewriting.
    Rewriting is completely done via conversions. *)
@@ -12,13 +14,13 @@ lemma
   shows "f ((a - a) + (a - a)) + f ((a - a) + c) = f 0 +  f c"
 
   (* First, from right to left, reduce the (a - a) terms to zero. *)
-  apply(pat_subst in "f _ + f \<box> = _" Groups.group_add_class.diff_self)
-  apply(pat_subst at "f (_ + \<box>) + f _ = _" Groups.group_add_class.diff_self)
-  apply(pat_subst in "f \<box> + _ = _" Groups.group_add_class.diff_self)
+  apply(pat_subst in "f _ + f \<box> = _" diff_self)
+  apply(pat_subst at "f (_ + \<box>) + f _ = _" diff_self)
+  apply(pat_subst in "f \<box> + _ = _" diff_self)
 
   (* Collapse zeros from left to right. *)
-  apply(pat_subst at "0 + 0" Groups.monoid_add_class.add.left_neutral)
-  apply(pat_subst at "0 + c" Groups.monoid_add_class.add.left_neutral)
+  apply(pat_subst at "0 + 0" add.left_neutral)
+  apply(pat_subst at "0 + c" add.left_neutral)
 
   apply(rule refl)
 done
@@ -33,9 +35,7 @@ apply(pat_subst at "\<box> > c" at asm add_commute)
 apply(assumption)
 done
 
-(* Pattern based rewriting on subterms containing bound variables.
-   This is accomplished by parametrizing Vars in the pattern with 
-   all bound variables in the current subterm's context. *)
+(* Pattern based rewriting on subterms containing bound variables. *)
 lemma "P {x::rat. y + 1 = x + 1}"
 (* The rightmost pattern binds the indentifier x, that can then later be reused. *)
 apply(pat_subst at "x+1" in "{x::rat. \<box> }" add_commute)
