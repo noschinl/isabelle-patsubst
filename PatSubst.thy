@@ -4,6 +4,7 @@ begin
 
 ML {*
 fun CONCAT' tacs = fold_rev (curry op APPEND') tacs (K no_tac);
+fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 *}
 
 ML{* Toplevel.debug := false; *}
@@ -291,14 +292,14 @@ struct
       end;
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) => fn st =>
+  fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
     let
-      val thy = Thm.theory_of_thm st;
+      val thy = Proof_Context.theory_of ctxt
       val matches = find_matches thy pattern (t, I);
       fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
-      fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i st;
+      fun tac (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i;
     in
-      Seq.maps subst matches
+      SEQ_CONCAT (Seq.map tac matches)
     end);
   
   fun patsubst_tac ctxt pattern thms =
