@@ -287,25 +287,23 @@ struct
       end;
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt th i (pattern, inst) rule =
+  fun rewrite_goal_with_thm ctxt (pattern, inst) rule i st =
     let
-      val theory = Thm.theory_of_thm th;
-      val goal = Logic.get_goal (Thm.prop_of th) i;
+      val theory = Thm.theory_of_thm st;
+      val goal = Logic.get_goal (Thm.prop_of st) i;
       val matches = find_matches theory pattern (goal, I);
       fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
-      fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i th;
+      fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i st;
     in
       Seq.maps subst matches
     end;
   
-  fun distinct_subgoals th = the_default th (SINGLE distinct_subgoals_tac th);
-
-  (* PatSubst tactic. *)
-  fun patsubst_tac ctxt pattern thms i th =
-    Seq.of_list thms
-    |> Seq.maps (prep_meta_eq ctxt #> Seq.of_list)
-    |> Seq.maps (rewrite_goal_with_thm ctxt th i pattern)
-    |> Seq.map distinct_subgoals;
+  fun patsubst_tac ctxt pattern thms =
+    let
+      val thms' = maps (prep_meta_eq ctxt) thms
+      val tac = rewrite_goal_with_thm ctxt pattern
+    in FIRST' (map tac thms') THEN' (K distinct_subgoals_tac)end
+   (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
 
   (* Method setup for pat_subst.
      TODO: Merge with subst method in 'src/Tools/eqsubst.ML'. *)
