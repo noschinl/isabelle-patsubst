@@ -134,8 +134,8 @@ struct
     | _ =>  Seq.empty;
   
   (* Descend below a judment, if there is one. *)
-  fun move_below_judgment theory (ft as (t, _) : focusterm) =
-    if Object_Logic.is_judgment theory t
+  fun move_below_judgment thy (ft as (t, _) : focusterm) =
+    if Object_Logic.is_judgment thy t
     then ft |> move_below_right
     else ft;
 
@@ -158,7 +158,7 @@ struct
     end;
 
   (* Match a focusterm against a pattern. *)
-  fun focusterm_matches theory pattern ((subterm , _) : focusterm) =
+  fun focusterm_matches thy pattern ((subterm , _) : focusterm) =
     let
       (* We want schematic variables in our pattern to match subterms that
          contain dangling bounds. To achieve this, we parametrize them with
@@ -171,7 +171,7 @@ struct
             parametrize_vars Ts l $ parametrize_vars Ts r
         | parametrize_vars _ t = t;
     in
-      Pattern.matches theory (parametrize_vars [] pattern, subterm)
+      Pattern.matches thy (parametrize_vars [] pattern, subterm)
     end;
 
   (* Find all subterms that might be a valid point to apply a rule. *)
@@ -203,7 +203,7 @@ struct
     | collect_identifiers term = if is_hole term then SOME [] else NONE;
 
   (* Find a subterm of the focusterm matching the pattern. *)
-  fun find_matches theory pattern_list =
+  fun find_matches thy pattern_list =
     let
       (* Select a subterm of the current focusterm by moving down the
          pattern that describes it until you find the schematic variable 
@@ -229,14 +229,14 @@ struct
         else SOME;
 
       (* Apply a pattern to a sequence of focusterms. *)
-      fun apply_pattern At = Seq.map (move_below_judgment theory)
+      fun apply_pattern At = Seq.map (move_below_judgment thy)
         | apply_pattern In = Seq.maps valid_match_points
         | apply_pattern Asm = Seq.map move_below_params #>
                               Seq.maps move_below_assms
         | apply_pattern Concl = Seq.map (move_below_params #> move_below_concl)
         | apply_pattern Prop = I
         | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
-        | apply_pattern (Term term) = Seq.filter (focusterm_matches theory term) #> 
+        | apply_pattern (Term term) = Seq.filter (focusterm_matches thy term) #> 
                                       Seq.map_filter (find_subterm_hole term);
     in
       Seq.single #> fold_rev apply_pattern pattern_list
@@ -289,8 +289,8 @@ struct
   (* Rewrite in subgoal i. *)
   fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) => fn st =>
     let
-      val theory = Thm.theory_of_thm st;
-      val matches = find_matches theory pattern (t, I);
+      val thy = Thm.theory_of_thm st;
+      val matches = find_matches thy pattern (t, I);
       fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
       fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i st;
     in
