@@ -287,16 +287,15 @@ struct
       end;
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt (pattern, inst) rule i st =
+  fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) => fn st =>
     let
       val theory = Thm.theory_of_thm st;
-      val goal = Logic.get_goal (Thm.prop_of st) i;
-      val matches = find_matches theory pattern (goal, I);
+      val matches = find_matches theory pattern (t, I);
       fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
       fun subst (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i st;
     in
       Seq.maps subst matches
-    end;
+    end);
   
   fun patsubst_tac ctxt pattern thms =
     let
