@@ -2,6 +2,10 @@ theory PatSubst
 imports Main cconv
 begin
 
+ML {*
+fun CONCAT' tacs = fold_rev (curry op APPEND') tacs (K no_tac);
+*}
+
 ML{* Toplevel.debug := false; *}
 ML {*
 (*
@@ -301,7 +305,7 @@ struct
     let
       val thms' = maps (prep_meta_eq ctxt) thms
       val tac = rewrite_goal_with_thm ctxt pattern
-    in FIRST' (map tac thms') THEN' (K distinct_subgoals_tac)end
+    in CONCAT' (map tac thms') THEN' (K distinct_subgoals_tac)end
    (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
 
   (* Method setup for pat_subst.
