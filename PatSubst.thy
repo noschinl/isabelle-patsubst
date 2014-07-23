@@ -327,7 +327,7 @@ struct
               Scan.repeat ((for_reader >> ForToken) || (keyword_reader -- atom_reader >> PairToken))
             end;
             
-          val context_tokenzier = Scan.lift tokenizer #> (fn (r, (ctxt, ts)) => ((Context.proof_of ctxt, r), (ctxt, ts)))
+          val context_tokenizer = Scan.lift tokenizer #> (fn (r, (ctxt, ts)) => ((Context.proof_of ctxt, r), (ctxt, ts)))
           
           fun tokens_to_patterns (ctxt, token_list) =
             let
@@ -421,7 +421,7 @@ struct
                   Term _ => patterns @ [In, Concl]
                 | _ => patterns;
         in
-          context_tokenzier >> tokens_to_patterns >> append_default
+          context_tokenizer >> tokens_to_patterns >> append_default
         end;
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
