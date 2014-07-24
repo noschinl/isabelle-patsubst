@@ -127,13 +127,13 @@ struct
   (* Move to B in A1 ==> ... ==> An ==> B. *)
   fun move_below_concl (ft as (t, _) : focusterm) =
     case t of
-      (Const ("==>", _) $ _) $ _ => ft |> move_below_right |> move_below_concl
+      (Const (@{const_name "==>"}, _) $ _) $ _ => ft |> move_below_right |> move_below_concl
     | _ =>  ft;
     
   (* Move to the A's in A1 ==> ... ==> An ==> B. *)
   fun move_below_assms (ft as (t, _) : focusterm) =
     case t of
-      (Const ("==>", _) $ _) $ _ =>
+      (Const (@{const_name "==>"}, _) $ _) $ _ =>
         Seq.cons (ft |> move_below_left |> move_below_right)
                  (ft |> move_below_right |> move_below_assms)
     | _ =>  Seq.empty;

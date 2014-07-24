@@ -151,14 +151,14 @@ struct
   fun prems_conv 0 cv ct = cv ct
     | prems_conv n cv ct =
         (case ct |> Thm.term_of of
-          (Const ("==>", _) $ _) $ _ => ((if n = 1 then fun_conv else I) o arg_conv) (prems_conv (n-1) cv) ct
+          (Const (@{const_name "==>"}, _) $ _) $ _ => ((if n = 1 then fun_conv else I) o arg_conv) (prems_conv (n-1) cv) ct
         | _ =>  cv ct);
 
   (*rewrite B in A1 ==> ... ==> An ==> B*)
   fun concl_conv 0 cv ct = cv ct
     | concl_conv n cv ct =
         (case ct |> Thm.term_of of
-          (Const ("==>", _) $ _) $ _ => arg_conv (concl_conv (n-1) cv) ct
+          (Const (@{const_name "==>"}, _) $ _) $ _ => arg_conv (concl_conv (n-1) cv) ct
         | _ =>  cv ct);
   
   (*forward conversion, cf. FCONV_RULE in LCF*)
