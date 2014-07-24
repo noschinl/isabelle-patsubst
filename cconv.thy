@@ -23,6 +23,7 @@ sig
   val concl_conv: int -> conv -> conv
   val fconv_rule: conv -> thm -> thm
   val gconv_rule: conv -> int -> thm -> thm
+  val CCONVERSION: conv -> int -> tactic
 end;
 
 structure CConv : CCONV =
@@ -191,14 +192,17 @@ struct
           else with_subgoal i (fconv_rule (arg1_conv (K eq))) th
         end
     | NONE => raise THM ("gconv_rule", i, [th]));
+
+    (* Conditional conversions as tactics. *)
+  fun CCONVERSION cv i st = Seq.single (gconv_rule cv i st)
+    handle THM _ => Seq.empty
+         | CTERM _ => Seq.empty
+         | TERM _ => Seq.empty
+         | TYPE _ => Seq.empty;
 end;
-  
-(* Conditional conversions as tactics. *)
-fun CCONVERSION cv i st = Seq.single (CConv.gconv_rule cv i st)
-  handle THM _ => Seq.empty
-       | CTERM _ => Seq.empty
-       | TERM _ => Seq.empty
-       | TYPE _ => Seq.empty;
+
+val CCONVERSION = CConv.CCONVERSION
+
 *}
 
 end
