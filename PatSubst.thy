@@ -368,13 +368,6 @@ struct
                   (ctxt', mappings') : fixes_info
                 end;
             
-              (* Normally, we would use Proof_Context.read_term_pattern to parse
-                 our patterns. But unfortunately, it treats dummy variables and
-                 true schematic variables differently. Since we do not want to
-                 make a distinction between them in our matching code, we handle
-                 some of the parsing work ourselves. This is actually not that bad,
-                 since we might need to do this anyway, if we ever introduce a
-                 dedicated constant to represent subterm holes in our patterns. *)
               fun read_pattern info string =
                 let                       
                   val add_pattern_fixes =
