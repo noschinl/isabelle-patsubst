@@ -211,13 +211,9 @@ struct
   fun collect_identifiers (Abs (n, t, a)) = 
         Option.map (curry op:: (n, t)) (collect_identifiers a)
     | collect_identifiers (l $ r) = 
-        let
-          val left_idents = collect_identifiers l
-        in
-          if Option.isSome left_idents
-          then left_idents
-          else collect_identifiers r
-        end
+        (case collect_identifiers l of
+          SOME xs => SOME xs
+        | NONE => collect_identifiers r)
     | collect_identifiers term = if is_hole term then SOME [] else NONE;
 
   (* Find a subterm of the focusterm matching the pattern. *)
