@@ -87,7 +87,7 @@ struct
              Either use the identifier supplied by the user, or use a dummy name. *)
           (* TODO: Rename any old occurrences of the new identifier.
                    The new identifier should always take precedence. *)
-          val new_ident = Option.getOpt (ident, "__dummy__");
+          val new_ident = the_default "__dummy__" ident;
           val replace_bound = curry Term.subst_bound (Free (new_ident, typ)); 
         in (replace_bound sub, below_abs ident conversion) : focusterm end
     | move_below_abs _ ft = raise TERM ("move_below_abs", [#1 ft]);
