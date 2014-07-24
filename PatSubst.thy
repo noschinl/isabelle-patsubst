@@ -7,6 +7,8 @@ fun CONCAT' tacs = fold_rev (curry op APPEND') tacs (K no_tac);
 fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 *}
 
+consts patsubst_HOLE :: 'a
+
 ML{* Toplevel.debug := false; *}
 ML {*
 (*
@@ -164,20 +166,7 @@ struct
 
   (* Match a focusterm against a pattern. *)
   fun focusterm_matches thy pattern ((subterm , _) : focusterm) =
-    let
-      (* We want schematic variables in our pattern to match subterms that
-         contain dangling bounds. To achieve this, we parametrize them with
-         all the bounds in their context. *)
-      fun parametrize_vars Ts (Var (n, T)) =
-          list_comb (Var (n, Ts ---> T), map_range Bound (length Ts))
-        | parametrize_vars Ts (Abs (n, T, t)) =
-            Abs (n, T, parametrize_vars (T :: Ts) t)
-        | parametrize_vars Ts (l $ r) =
-            parametrize_vars Ts l $ parametrize_vars Ts r
-        | parametrize_vars _ t = t;
-    in
-      Pattern.matches thy (parametrize_vars [] pattern, subterm)
-    end;
+    Pattern.matches thy ( pattern, subterm)
 
   (* Find all subterms that might be a valid point to apply a rule. *)
   val valid_match_points =
@@ -189,12 +178,36 @@ struct
     in
       find_subterms (#1 #> is_valid)
     end;
-    
-  val hole_name = "__HOLE__";
+
+  val hole_name = "_HOLE_"
+
   fun is_hole (Var ((name, _), _)) = (name = hole_name)
     | is_hole _ = false;
-  
-  (* Get a list of all identifiers introduced on the way to the hole. *)
+
+  val hole_syntax =
+    let
+      val notation = ["HOLE", "\<box>"]
+        |> map (fn s => (@{term patsubst_HOLE}, Delimfix s))
+        |> Proof_Context.notation true Syntax.mode_default
+
+      (* Modified variant of Term.replace_hole *)
+      fun replace_hole Ts (Const (@{const_name patsubst_HOLE}, T)) i =
+            (list_comb (Var ((hole_name, i), Ts ---> T), map_range Bound (length Ts)), i + 1)
+        | replace_hole Ts (Abs (x, T, t)) i =
+            let val (t', i') = replace_hole (T :: Ts) t i
+            in (Abs (x, T, t'), i') end
+        | replace_hole Ts (t $ u) i =
+            let
+              val (t', i') = replace_hole Ts t i;
+              val (u', i'') = replace_hole Ts u i';
+            in (t' $ u', i'') end
+        | replace_hole _ a i = (a, i);
+      fun prep_holes ts = #1 (fold_map (replace_hole []) ts 1);
+
+      val check = Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes))
+    in notation #> check end
+
+    (* Get a list of all identifiers introduced on the way to the hole. *)
   fun collect_identifiers (Abs (n, t, a)) = 
         Option.map (curry op:: (n, t)) (collect_identifiers a)
     | collect_identifiers (l $ r) = 
@@ -210,26 +223,32 @@ struct
   (* Find a subterm of the focusterm matching the pattern. *)
   fun find_matches thy pattern_list =
     let
+      fun comb_ft ft =
+        let
+          fun add ft (t :: u :: ts) = (t, move_below_right ft) :: add (move_below_left ft) (u :: ts)
+            | add ft [t] = [(t, ft)]
+            | add _ [] = []
+        in rev o add ft o rev end
+
       (* Select a subterm of the current focusterm by moving down the
          pattern that describes it until you find the schematic variable 
          that corresponds to the supplied Var term. *)
-      fun find_var varname pattern focusterm =
+      fun find_var (pattern, focusterm) =
         (case pattern of
-           Abs (n, _, sub) => find_var varname sub (move_below_abs (SOME n) focusterm)
-        | l $ r =>
-            (case find_var varname l (move_below_left focusterm) of
-              SOME x => SOME x
-            | NONE => find_var varname r (move_below_right focusterm))
-        | Var ((name, _), _) => 
-            if varname = name
-            then SOME focusterm
-            else NONE
-        | _ => NONE) handle TERM _ => NONE;
+          Abs (n, _, sub) => find_var (sub, move_below_abs (SOME n) focusterm)
+        | t as (_ $ _) =>
+            let val (f, ts) = strip_comb t
+            in if is_hole f
+              then SOME focusterm
+              else get_first find_var (comb_ft focusterm (f :: ts))
+            end
+        | t => if is_hole t then SOME focusterm else NONE)
+        handle TERM _ => NONE;
 
-      fun find_subterm_hole pattern =
+      fun find_subterm_hole pattern x =
         if Term.exists_subterm is_hole pattern
-        then find_var hole_name pattern
-        else SOME;
+        then find_var (pattern, x) (* XXX NONE here is an error, isn't it? *)
+        else SOME x;
 
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = Seq.map (move_below_judgment thy)
@@ -358,20 +377,6 @@ struct
                  dedicated constant to represent subterm holes in our patterns. *)
               fun read_pattern info string =
                 let                       
-                  fun replace_dummy i (Const ("dummy_pattern", T)) =
-                        (Var (("_dummy_", i), T), i+1)
-                    | replace_dummy i (Const ("PatSubst.HOLE", T)) =
-                        (Var ((hole_name, i), T), i+1)
-                    | replace_dummy i (Abs (x, T, t)) =
-                        let val (t', i') = replace_dummy i t;
-                        in (Abs (x, T, t'), i') end
-                    | replace_dummy i (l $ r) =
-                        let val (l', i')  = replace_dummy i l;
-                            val (r', i'') = replace_dummy i' r;
-                        in (l' $ r', i'') end
-                    | replace_dummy i t = (t, i);
-                  val replace_dummy_patterns = replace_dummy 0 #> #1;
-                
                   val add_pattern_fixes =
                     collect_identifiers
                     #> the_default []
@@ -379,13 +384,9 @@ struct
                     #> add_fixes;
                   
                   (* Parse the string into a term. *)
-                  val set_mode_pattern = Proof_Context.set_mode Proof_Context.mode_pattern
                   val ctxt = get_ctxt info;
-                  val pattern = string
-                             |> Syntax.parse_term ctxt
-                             |> replace_dummy_patterns
-                             |> Syntax.check_term (set_mode_pattern ctxt);
-                  (* Add all introduced indentifiers as fixes to the context. *)
+                  val pattern = Proof_Context.read_term_pattern ctxt string
+                  (* Add all introduced identifiers as fixes to the context. *)
                   val fixes' = add_pattern_fixes pattern info
     
                   (* We only add the fixes to get nice highlighting in Isabelle, *)              
@@ -410,7 +411,7 @@ struct
                 | token_to_pattern (ForToken names) (s, patterns) =
                     (add_fixes names s, For names :: patterns);
             in
-              fold_rev token_to_pattern token_list ((ctxt, []), []) |> #2
+              fold_rev token_to_pattern token_list ((hole_syntax ctxt, []), []) |> #2
             end;
           
           (* Patterns should have an implicit in concl appended when they end in a term pattern. *)
@@ -432,9 +433,6 @@ struct
     end;
 end;
 *}
-
-(* I should probably declare the hole constant with Sign.declare_const somewhere inside the parser. *)
-consts HOLE :: "'a::{}" ("\<box>")
 
 setup PatSubst.setup
 
