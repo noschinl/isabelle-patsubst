@@ -216,12 +216,10 @@ struct
       fun find_var varname pattern focusterm =
         (case pattern of
            Abs (n, _, sub) => find_var varname sub (move_below_abs (SOME n) focusterm)
-         | l $ r =>
-             let val left = find_var varname l (move_below_left focusterm);
-             in if is_some left
-                then left
-                else find_var varname r (move_below_right focusterm)
-             end
+        | l $ r =>
+            (case find_var varname l (move_below_left focusterm) of
+              SOME x => SOME x
+            | NONE => find_var varname r (move_below_right focusterm))
         | Var ((name, _), _) => 
             if varname = name
             then SOME focusterm
