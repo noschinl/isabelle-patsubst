@@ -313,9 +313,6 @@ struct
      TODO: Merge with subst method in 'src/Tools/eqsubst.ML'. *)
   val setup =
     let
-      fun to_method f a b c = SIMPLE_METHOD' (f a b c);
-      val patsubst_meth = to_method patsubst_tac;
-      
       (* The pattern parser, parses a list of pattern elements. *)
       val pattern_parser : pattern list context_parser =
         let
@@ -430,11 +427,10 @@ struct
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
       val subst_parser = pattern_parser -- Attrib.thms -- Scan.option (Scan.lift instantiation_parser);
-  
-      fun subst_method ((pattern, inthms), inst) ctxt = patsubst_meth ctxt (pattern, inst) inthms;
     in
-      Method.setup @{binding pat_subst} (subst_parser >> subst_method)
-                   "extended single-step substitution, allowing subterm selection via patterns."
+      Method.setup @{binding pat_subst} (subst_parser >>
+        (fn ((pattern, inthms), inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
+        "extended single-step substitution, allowing subterm selection via patterns."
     end;
 end;
 *}
