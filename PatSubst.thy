@@ -249,8 +249,7 @@ struct
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = Seq.map (move_below_judgment thy)
         | apply_pattern In = Seq.maps valid_match_points
-        | apply_pattern Asm = Seq.map move_below_params #>
-                              Seq.maps move_below_assms
+        | apply_pattern Asm = Seq.maps (move_below_params #> move_below_assms)
         | apply_pattern Concl = Seq.map (move_below_params #> move_below_concl)
         | apply_pattern Prop = I
         | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
