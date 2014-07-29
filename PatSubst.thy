@@ -246,6 +246,11 @@ struct
         then find_var (pattern, x) (* XXX NONE here is an error, isn't it? *)
         else SOME x;
 
+      fun move_term thy t (ft as (subterm, _)) =
+        if Pattern.matches thy (t, subterm)
+        then find_subterm_hole t ft
+        else NONE
+
       (* Apply a pattern to a sequence of focusterms. *)
       fun apply_pattern At = Seq.map (move_below_judgment thy)
         | apply_pattern In = Seq.maps valid_match_points
@@ -253,10 +258,9 @@ struct
         | apply_pattern Concl = Seq.map (move_below_params #> move_below_concl)
         | apply_pattern Prop = I
         | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
-        | apply_pattern (Term term) = Seq.filter (focusterm_matches thy term) #> 
-                                      Seq.map_filter (find_subterm_hole term);
+        | apply_pattern (Term term) = Seq.map_filter (move_term thy term);
     in
-      Seq.single #> fold_rev apply_pattern pattern_list
+      Seq.single #> fold_rev apply_pattern pattern_list (* XXX -- less revs? *)
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
