@@ -256,7 +256,7 @@ struct
         | apply_pattern (For idents) = Seq.map_filter (move_below_for idents)
         | apply_pattern (Term term) = Seq.map_filter (move_term thy term);
     in
-      Seq.single #> fold_rev apply_pattern pattern_list (* XXX -- less revs? *)
+      Seq.single #> fold apply_pattern pattern_list
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
@@ -399,15 +399,13 @@ struct
                 | token_to_pattern (ForToken names) (s, patterns) =
                     (add_fixes names s, For names :: patterns);
             in
-              fold_rev token_to_pattern token_list ((hole_syntax ctxt, []), []) |> #2
+              fold_rev token_to_pattern token_list ((hole_syntax ctxt, []), []) |> #2 |> rev
             end;
           
           (* Patterns should have an implicit in concl appended when they end in a term pattern. *)
           fun append_default [] = [In, Concl]
-            | append_default patterns = 
-                case patterns |> rev |> hd of
-                  Term _ => patterns @ [In, Concl]
-                | _ => patterns;
+            | append_default (ps as Term _ :: _) = In :: Concl :: ps
+            | append_default ps = ps
         in
           context_tokenizer >> tokens_to_patterns >> append_default
         end;
