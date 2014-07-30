@@ -100,7 +100,7 @@ struct
            fun abstract_rule u v eq = 
              let
                (* Take a variable v and an equality theorem of form:
-                    P1 ==> ... ==> Pn ==> L v == R v
+                    P1 Pure.imp ... Pure.imp Pn Pure.imp L v == R v
                   And build a term of form:
                     !!v. (%x. L x) v == (%x. R x) v *)
                fun mk_concl var eq =
@@ -147,18 +147,18 @@ struct
 
   (* TODO: This code behaves not exactly like Conv.prems_conv does.
            Fix this! *)
-  (*rewrite the A's in A1 ==> ... ==> An ==> B*)
+  (*rewrite the A's in A1 Pure.imp ... Pure.imp An Pure.imp B*)
   fun prems_conv 0 cv ct = cv ct
     | prems_conv n cv ct =
         (case ct |> Thm.term_of of
-          (Const (@{const_name "==>"}, _) $ _) $ _ => ((if n = 1 then fun_conv else I) o arg_conv) (prems_conv (n-1) cv) ct
+          (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => ((if n = 1 then fun_conv else I) o arg_conv) (prems_conv (n-1) cv) ct
         | _ =>  cv ct);
 
-  (*rewrite B in A1 ==> ... ==> An ==> B*)
+  (*rewrite B in A1 Pure.imp ... Pure.imp An Pure.imp B*)
   fun concl_conv 0 cv ct = cv ct
     | concl_conv n cv ct =
         (case ct |> Thm.term_of of
-          (Const (@{const_name "==>"}, _) $ _) $ _ => arg_conv (concl_conv (n-1) cv) ct
+          (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => arg_conv (concl_conv (n-1) cv) ct
         | _ =>  cv ct);
   
   (*forward conversion, cf. FCONV_RULE in LCF*)

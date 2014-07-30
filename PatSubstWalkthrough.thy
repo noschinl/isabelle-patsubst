@@ -29,21 +29,21 @@ done
 lemma 
 fixes x::nat and y::nat
 shows "x + y > c \<Longrightarrow> y + x > c"
-apply(pat_subst in asm add_commute)
-apply(pat_subst in "y + x > c" at asm add_commute)
-apply(pat_subst at "\<box> > c" at asm add_commute)
+apply(pat_subst in asm add.commute)
+apply(pat_subst in "y + x > c" at asm add.commute)
+apply(pat_subst at "\<box> > c" at asm add.commute)
 apply(assumption)
 done
 
 (* Pattern based rewriting on subterms containing bound variables. *)
 lemma "P {x::rat. y + 1 = x + 1}"
 (* The rightmost pattern binds the indentifier x, that can then later be reused. *)
-apply(pat_subst at "x+1" in "{x::rat. \<box> }" add_commute)
+apply(pat_subst at "x+1" in "{x::rat. \<box> }" add.commute)
 oops
 
 (* Slightly more complicated pattern. *)
 lemma "P {(x::nat, y::nat, z). x + z * 3 = Q (\<lambda>s t. y + s * t - 3)}"
-apply(pat_subst at "b + d * e" in "\<lambda>(a, b, c). _ = Q (\<lambda>d e. \<box>)" add_commute)
+apply(pat_subst at "b + d * e" in "\<lambda>(a, b, c). _ = Q (\<lambda>d e. \<box>)" add.commute)
 oops
 
 (* Rewriting with conditional rewriting rules works just as well. *)
@@ -103,16 +103,16 @@ oops
 
 (* The "for" keyword. *)
 lemma "\<And>x y z. x + y + z = z + y + (x::int)"
-apply(pat_subst at "x + y" in "x + y + z" in concl for (x y z) add_commute)
-apply(pat_subst at "(y + _) + z" in concl for (y z) add_commute)
-apply(pat_subst at "_" in concl for () add_commute)
+apply(pat_subst at "x + y" in "x + y + z" in concl for (x y z) add.commute)
+apply(pat_subst at "(y + _) + z" in concl for (y z) add.commute)
+apply(pat_subst at "_" in concl for () add.commute)
 apply(simp)
 done
 
 (* It can be used anywhere in the pattern where there is an \<And>-Quantifier.
    TODO: This is still a little awkward. *)
 lemma "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-apply(pat_subst at "x + 1" in goal for(x) at asm add_commute)
+apply(pat_subst at "x + 1" in goal for(x) at asm add.commute)
 apply(simp)
 done
 

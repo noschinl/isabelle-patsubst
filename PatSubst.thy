@@ -11,7 +11,6 @@ consts patsubst_HOLE :: 'a
 notation patsubst_HOLE ("HOLE")
 notation patsubst_HOLE ("\<box>")
 
-ML{* Toplevel.debug := false; *}
 ML {*
 (*
   Author: Christoph Traut, TU Muenchen
@@ -128,16 +127,16 @@ struct
            | LESS    => NONE
     end;
     
-  (* Move to B in A1 ==> ... ==> An ==> B. *)
+  (* Move to B in A1 Pure.imp ... Pure.imp An Pure.imp B. *)
   fun move_below_concl (ft as (t, _) : focusterm) =
     case t of
-      (Const (@{const_name "==>"}, _) $ _) $ _ => ft |> move_below_right |> move_below_concl
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => ft |> move_below_right |> move_below_concl
     | _ =>  ft;
     
-  (* Move to the A's in A1 ==> ... ==> An ==> B. *)
+  (* Move to the A's in A1 Pure.imp ... Pure.imp An Pure.imp B. *)
   fun move_below_assms (ft as (t, _) : focusterm) =
     case t of
-      (Const (@{const_name "==>"}, _) $ _) $ _ =>
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ =>
         Seq.cons (ft |> move_below_left |> move_below_right)
                  (ft |> move_below_right |> move_below_assms)
     | _ =>  Seq.empty;
@@ -410,7 +409,7 @@ struct
           context_tokenizer >> tokens_to_patterns >> append_default
         end;
 
-      val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_source)
+      val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)
       val subst_parser = pattern_parser -- Attrib.thms -- Scan.option (Scan.lift instantiation_parser);
     in
       Method.setup @{binding pat_subst} (subst_parser >>
