@@ -200,9 +200,12 @@ struct
             in (t' $ u', i'') end
         | replace_hole _ a i = (a, i);
       fun prep_holes ts = #1 (fold_map (replace_hole []) ts 1);
-    in Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes)) end
+    in
+      Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes))
+      #> Proof_Context.set_mode Proof_Context.mode_pattern
+    end
 
-    (* Get a list of all identifiers introduced on the way to the hole. *)
+  (* Get a list of all identifiers introduced on the way to the hole. *)
   fun collect_identifiers (Abs (n, t, a)) = 
         Option.map (curry op:: (n, t)) (collect_identifiers a)
     | collect_identifiers (l $ r) = 
