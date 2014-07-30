@@ -112,7 +112,7 @@ done
 (* It can be used anywhere in the pattern where there is an \<And>-Quantifier.
    TODO: This is still a little awkward. *)
 lemma "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-apply(pat_subst at "x + 1" in goal for(x) at asm add.commute)
+apply(pat_subst at "x + 1" in goal for (x) at asm add.commute)
 apply(simp)
 done
 
