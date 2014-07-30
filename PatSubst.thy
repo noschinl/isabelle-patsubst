@@ -8,6 +8,8 @@ fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => t
 *}
 
 consts patsubst_HOLE :: 'a
+notation patsubst_HOLE ("HOLE")
+notation patsubst_HOLE ("\<box>")
 
 ML{* Toplevel.debug := false; *}
 ML {*
@@ -186,10 +188,6 @@ struct
 
   val hole_syntax =
     let
-      val notation = ["HOLE", "\<box>"]
-        |> map (fn s => (@{term patsubst_HOLE}, Delimfix s))
-        |> Proof_Context.notation true Syntax.mode_default
-
       (* Modified variant of Term.replace_hole *)
       fun replace_hole Ts (Const (@{const_name patsubst_HOLE}, T)) i =
             (list_comb (Var ((hole_name, i), Ts ---> T), map_range Bound (length Ts)), i + 1)
@@ -203,9 +201,7 @@ struct
             in (t' $ u', i'') end
         | replace_hole _ a i = (a, i);
       fun prep_holes ts = #1 (fold_map (replace_hole []) ts 1);
-
-      val check = Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes))
-    in notation #> check end
+    in Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes)) end
 
     (* Get a list of all identifiers introduced on the way to the hole. *)
   fun collect_identifiers (Abs (n, t, a)) = 
