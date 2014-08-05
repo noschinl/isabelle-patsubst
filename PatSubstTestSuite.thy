@@ -7,7 +7,7 @@ lemma
   fixes a::rat and b::rat and c::rat
   assumes "P (b + a)"
   shows "P (a + b)"
-by (pat_subst at "a + b" add_commute)
+by (pat_subst at "a + b" add.commute)
    (rule assms)
 
 (* Selecting a specific subterm in a large, ambiguous term. *)
@@ -44,21 +44,21 @@ lemma
   fixes x::nat and y::nat
   assumes "y + x > c \<Longrightarrow> y + x > c"
   shows   "x + y > c \<Longrightarrow> y + x > c"
-by (pat_subst in asm add_commute)
+by (pat_subst in asm add.commute)
    (rule assms)
    
 lemma
   fixes x::nat and y::nat
   assumes "y + x > c \<Longrightarrow> y + x > c"
   shows   "x + y > c \<Longrightarrow> y + x > c"
-by (pat_subst in "x + y > c" at asm add_commute)
+by (pat_subst in "x + y > c" at asm add.commute)
    (rule assms)
    
 lemma
   fixes x::nat and y::nat
   assumes "y + x > c \<Longrightarrow> y + x > c"
   shows   "x + y > c \<Longrightarrow> y + x > c"
-by (pat_subst at "\<box> > c" at asm  add_commute)
+by (pat_subst at "\<box> > c" at asm  add.commute)
    (rule assms)
 
 
@@ -66,19 +66,19 @@ by (pat_subst at "\<box> > c" at asm  add_commute)
 lemma
   assumes "P {x::rat. y + 1 = 1 + x}"
   shows   "P {x::rat. y + 1 = x + 1}"
-by (pat_subst at "x+1" in "{x::rat. \<box> }" add_commute)
+by (pat_subst at "x+1" in "{x::rat. \<box> }" add.commute)
    (rule assms)
    
 lemma
   assumes "P {x::rat. y + 1 = 1 + x}"
   shows   "P {x::rat. y + 1 = x + 1}"
-by (pat_subst at "any_identifier_will_work+1" in "{any_identifier_will_work::rat. \<box> }" add_commute)
+by (pat_subst at "any_identifier_will_work+1" in "{any_identifier_will_work::rat. \<box> }" add.commute)
    (rule assms)
 
 lemma
   assumes "P {(x::nat, y::nat, z). x + z * 3 = Q (\<lambda>s t. s * t + y - 3)}"
   shows   "P {(x::nat, y::nat, z). x + z * 3 = Q (\<lambda>s t. y + s * t - 3)}"
-by (pat_subst at "b + d * e" in "\<lambda>(a, b, c). _ = Q (\<lambda>d e. \<box>)" add_commute)
+by (pat_subst at "b + d * e" in "\<lambda>(a, b, c). _ = Q (\<lambda>d e. \<box>)" add.commute)
    (rule assms)
 
 (* Rewriting with conditional rewriting rules. *)
@@ -130,19 +130,19 @@ by (pat_subst in "\<lambda>any_identifier_works. \<box>" f_inv_def[symmetric] wh
 lemma
   assumes "\<And>x y z. y + x + z = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "x + y" in "x + y + z" in concl for (x y z) add_commute)
+by (pat_subst at "x + y" in "x + y + z" in concl for (x y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. z + (x + y) = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "(_ + y) + z" in concl for (y z) add_commute)
+by (pat_subst at "(_ + y) + z" in concl for (y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. x + y + z = y + z + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "\<box> + _" at "_ = \<box>" in concl for () add_commute)
+by (pat_subst at "\<box> + _" at "_ = \<box>" in concl for () add.commute)
    (rule assms)
 
 (* The for-keyword can be used anywhere in the pattern where there is an \<And>-Quantifier.
@@ -151,7 +151,7 @@ lemma
   assumes "(\<And>(x::int). x < 1 + x)"
   and     "(x::int) + 1 > x"
   shows   "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-by (pat_subst at "x + 1" in goal for(x) at asm add_commute)
+by (pat_subst at "x + 1" in goal for(x) at asm add.commute)
    (rule assms)
    
 (* A more complex example of instantiation involving the while combinator. *)

@@ -25,6 +25,12 @@ lemma
   apply(rule refl)
 done
 
+lemma
+  fixes x y :: nat shows"x + y > c \<Longrightarrow> y + x > c"
+apply (pat_subst at "\<box> > c" add.commute)
+apply assumption
+done
+
 (* We can also rewrite in the assumptions.  *)
 lemma 
 fixes x::nat and y::nat
@@ -37,7 +43,7 @@ done
 
 (* Pattern based rewriting on subterms containing bound variables. *)
 lemma "P {x::rat. y + 1 = x + 1}"
-(* The rightmost pattern binds the indentifier x, that can then later be reused. *)
+(* The rightmost pattern binds the identifier x that can then later be reused. *)
 apply(pat_subst at "x+1" in "{x::rat. \<box> }" add.commute)
 oops
 
