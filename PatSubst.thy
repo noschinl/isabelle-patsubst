@@ -351,62 +351,65 @@ struct
         in (r', (ctxt, toks' : Token.T list))end
       val _ = ctxt_lift : 'a parser -> (Context.generic -> 'a  -> 'b) -> 'b context_parser (*XXX*)
 
-      (* The pattern parser, parses a list of pattern elements. *)
-      val pattern_parser : term pattern list context_parser =
+      fun prep_pats ctxt (ps : string pattern list) =
         let
-          fun prep_pats ctxt (ps : string pattern list) =
-            let
-              fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
-                | is_hole_const _ = false
+          fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
+            | is_hole_const _ = false
 
-              fun add_constrs ctxt n (Abs (x, T, t)) =
-                  let
-                    val (x', ctxt') = yield_singleton Proof_Context.add_fixes (mk_fix x) ctxt
-                  in
-                    (case add_constrs ctxt' (n+1) t of
-                      NONE => NONE
-                    | SOME ((ctxt'', n', xs), t') =>
-                        let
-                          val U = Type_Infer.mk_param n []
-                          val u = Type.constraint (U --> dummyT) (Abs (x, T, t'))
-                        in SOME ((ctxt'', n', (x', U) :: xs), u) end)
-                  end
-                | add_constrs ctxt n (l $ r) =
-                  (case add_constrs ctxt n l of
-                    SOME (c, l') => SOME (c, l' $ r)
-                  | NONE =>
-                    (case add_constrs ctxt n r of
-                      SOME (c, r') => SOME (c, l $ r')
-                    | NONE => NONE))
-                | add_constrs ctxt n t =
-                  if is_hole_const t then SOME ((ctxt, n, []), t) else NONE
-    
-              fun prep (Term s) (n, ctxt) =
-                  let
-                    val t = (*Syntax.parse_term*)Proof_Context.read_term_pattern (hole_syntax ctxt) s
-                    val ((ctxt', n', bs), t') =
-                      the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
-                  in (Term (t'(*, bs*)), (n', ctxt')) end
-                | prep (For ss) (n, ctxt) =
-                  let val (ss', ctxt') = Proof_Context.add_fixes (map mk_fix ss) ctxt
-                  in (For ss', (n, ctxt')) end
-                | prep At (n,ctxt) = (At, (n, ctxt))
-                | prep In (n,ctxt) = (In, (n, ctxt))
-                | prep Concl (n,ctxt) = (Concl, (n, ctxt))
-                | prep Asm (n,ctxt) = (Asm, (n, ctxt))
-                | prep Prop (n,ctxt) = (Prop, (n, ctxt))
-    
-              val (xs, (_, ctxt')) = fold_map prep ps (0, ctxt)
-    
-            in (xs, ctxt') end
-        in
-          ctxt_lift raw_pattern (fst oo prep_pats o Context.proof_of)
-        end;
+          fun add_constrs ctxt n (Abs (x, T, t)) =
+              let
+                val (x', ctxt') = yield_singleton Proof_Context.add_fixes (mk_fix x) ctxt
+              in
+                (case add_constrs ctxt' (n+1) t of
+                  NONE => NONE
+                | SOME ((ctxt'', n', xs), t') =>
+                    let
+                      val U = Type_Infer.mk_param n []
+                      val u = Type.constraint (U --> dummyT) (Abs (x, T, t'))
+                    in SOME ((ctxt'', n', (x', U) :: xs), u) end)
+              end
+            | add_constrs ctxt n (l $ r) =
+              (case add_constrs ctxt n l of
+                SOME (c, l') => SOME (c, l' $ r)
+              | NONE =>
+                (case add_constrs ctxt n r of
+                  SOME (c, r') => SOME (c, l $ r')
+                | NONE => NONE))
+            | add_constrs ctxt n t =
+              if is_hole_const t then SOME ((ctxt, n, []), t) else NONE
+
+          fun prep (Term s) (n, ctxt) =
+              let
+                val t = (*Syntax.parse_term*)Proof_Context.read_term_pattern (hole_syntax ctxt) s
+                val ((ctxt', n', bs), t') =
+                  the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
+              in (Term (t'(*, bs*)), (n', ctxt')) end
+            | prep (For ss) (n, ctxt) =
+              let val (ss', ctxt') = Proof_Context.add_fixes (map mk_fix ss) ctxt
+              in (For ss', (n, ctxt')) end
+            | prep At (n,ctxt) = (At, (n, ctxt))
+            | prep In (n,ctxt) = (In, (n, ctxt))
+            | prep Concl (n,ctxt) = (Concl, (n, ctxt))
+            | prep Asm (n,ctxt) = (Asm, (n, ctxt))
+            | prep Prop (n,ctxt) = (Prop, (n, ctxt))
+
+          val (xs, (_, ctxt')) = fold_map prep ps (0, ctxt)
+
+        in (xs, ctxt') end
+
+      fun prep_args ctxt ((raw_pats, raw_ths), raw_insts) =
+        let
+          val ths = Attrib.eval_thms ctxt raw_ths
+          val (pats, _) = prep_pats ctxt raw_pats
+        in ((pats, ths), raw_insts) end
 
       val instantiation_parser = Scan.option
         ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax))
         >> the_default []
-      val subst_parser = pattern_parser -- Attrib.thms -- Scan.lift instantiation_parser;
+
+      val subst_parser =
+        let val scan = raw_pattern -- Parse_Spec.xthms1 -- instantiation_parser
+        in ctxt_lift scan (prep_args o Context.proof_of) end
     in
       Method.setup @{binding pat_subst} (subst_parser >>
         (fn ((pattern, inthms), inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
