@@ -262,8 +262,8 @@ struct
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
-  fun inst_thm _ _ NONE thm = thm
-    | inst_thm ctxt idents (SOME insts) thm =
+  fun inst_thm _ _ [] thm = thm
+    | inst_thm ctxt idents insts thm =
       let
         (* Replace any identifiers with their corresponding bound variables. *)
         val replace_identifiers =
@@ -403,8 +403,10 @@ struct
           ctxt_lift raw_pattern (fst oo prep_pats o Context.proof_of)
         end;
 
-      val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)
-      val subst_parser = pattern_parser -- Attrib.thms -- Scan.option (Scan.lift instantiation_parser);
+      val instantiation_parser = Scan.option
+        ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax))
+        >> the_default []
+      val subst_parser = pattern_parser -- Attrib.thms -- Scan.lift instantiation_parser;
     in
       Method.setup @{binding pat_subst} (subst_parser >>
         (fn ((pattern, inthms), inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
