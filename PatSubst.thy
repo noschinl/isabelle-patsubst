@@ -259,12 +259,12 @@ struct
             Term.map_aterms (subst idents)
           end;
     
-        (* Try to find the schematic variable, that we want to instantiate,
-           in the theorem. *)
-        fun find_var thm (varname, _) = 
-          find_subterms (fn (Var ((name, _), _), _) => name = varname | _ => false) (Thm.prop_of thm, I)
-          |> Seq.hd |> #1
-          handle Option.Option => error ("Could not find variable " ^ varname ^ " in the rewritten subterm.");
+        val th_vars = Term.add_vars (Thm.prop_of thm) []
+
+        fun find_var (x as (s, _)) =
+          case AList.lookup (op=) th_vars x of
+            NONE => error ("Could not find variable " ^ s ^ " in the rewritten subterm.") (*XXX pretty-print schematic*)
+          | SOME T => T
     
         fun prep_inst (x, t) =
           let
@@ -277,7 +277,7 @@ struct
         val tyinsts = insts'
           |> map fst
           |> distinct (op aconv)
-          |> map (fn Var (x, T) => (fastype_of (find_var thm x), T))
+          |> map (fn Var (x, T) => (find_var x, T))
           |> filter (Term.is_TVar o fst)
         val thy = Thm.theory_of_thm thm
         fun certs f = map (pairself (f thy))
