@@ -35,7 +35,11 @@ ML {*
   which can then be used to match arbitary subterms inside abstractions.
 *)
 
-structure PatSubst =
+signature PAT_SUBST = sig
+  val setup : theory -> theory
+end
+
+structure Pat_Subst : PAT_SUBST =
 struct
   (* Data type to represent a single pattern step.
      Patterns entered by the user will be of type "pattern list".  *)
@@ -515,6 +519,6 @@ struct
 end;
 *}
 
-setup PatSubst.setup
+setup Pat_Subst.setup
 
 end
