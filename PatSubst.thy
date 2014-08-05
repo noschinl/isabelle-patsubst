@@ -241,15 +241,14 @@ struct
       fun apply_pats ft = (ft, Vartab.empty)
         |> Seq.single
         |> fold apply_pat pattern_list
-        |> Seq.map fst
 
     in
       apply_pats
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
-  fun inst_thm _ _ [] thm = thm
-    | inst_thm ctxt idents insts thm =
+  fun inst_thm _ _ ([], _) thm = thm
+    | inst_thm ctxt idents (insts, tyenv) thm =
       let
         (* Replace any identifiers with their corresponding bound variables. *)
         val replace_identifiers =
@@ -267,26 +266,26 @@ struct
           |> Seq.hd |> #1
           handle Option.Option => error ("Could not find variable " ^ varname ^ " in the rewritten subterm.");
     
-        val c = Thm.cterm_of (Thm.theory_of_thm thm);
-        (* Take a pair "indexname * term" representing an instantiation and
-           turn it into a pair cterm * cterm, that we can pass to
-           Thm.instantiate. We need to do some substitutions, if we want our
-           instantiated subterm to contain variables bound in its context. *)
-        fun prepare thm (t1, t2) = 
+        fun prep_inst (x, t) =
           let
-            val var = find_var thm t1;
-            val coerce = Type.constraint (Term.type_of var);
-            val check =
-             Syntax.check_term (Proof_Context.set_mode Proof_Context.mode_schematic ctxt);
-            val parse = Syntax.parse_term ctxt #> replace_identifiers #> coerce #> check;
-            val read_term = parse t2;
-            val term_type = Term.fastype_of read_term;
-            val new_var = var |> Term.dest_Var |> (fn (n, _) => (n, term_type)) |> Var; 
-          in
-            (new_var |> c, read_term |> c)
-          end;
-
-        val instantiate = Drule.instantiate_normalize ([], map (prepare thm) insts);
+            val t' = t
+              |> Envir.subst_term_types tyenv
+              |> replace_identifiers
+            val x' = Var (x, fastype_of t')
+          in (x', t') end
+        val insts' = map prep_inst insts
+        val tyinsts = insts'
+          |> map fst
+          |> distinct (op aconv)
+          |> map (fn Var (x, T) => (fastype_of (find_var thm x), T))
+          |> filter (Term.is_TVar o fst)
+        val thy = Thm.theory_of_thm thm
+        fun certs f = map (pairself (f thy))
+        val x = (certs Thm.ctyp_of tyinsts, certs Thm.cterm_of insts')
+        val _ = warning "foo"
+        val _ = @{print} (fst x)
+        val _ = @{print} (snd x)
+        val instantiate = Drule.instantiate_normalize x
       in
         instantiate thm
       end;
@@ -296,8 +295,8 @@ struct
     let
       val thy = Proof_Context.theory_of ctxt
       val matches = find_matches thy pattern (t, I);
-      fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv ((*inst_thm ctxt bounds inst*) rule);
-      fun tac (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i;
+      fun rewrite_conv rule insty ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
+      fun tac ((_, position), tyenv) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
     in
       SEQ_CONCAT (Seq.map tac matches)
     end);
