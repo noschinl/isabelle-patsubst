@@ -310,7 +310,7 @@ struct
     let
       val thy = Proof_Context.theory_of ctxt
       val matches = find_matches thy pattern (t, I);
-      fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds inst rule);
+      fun rewrite_conv rule inst ctxt bounds  = CConv.rewr_conv ((*inst_thm ctxt bounds inst*) rule);
       fun tac (_, position) = CCONVERSION (position (rewrite_conv rule inst) ctxt []) i;
     in
       SEQ_CONCAT (Seq.map tac matches)
