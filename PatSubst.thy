@@ -328,89 +328,79 @@ struct
   val setup =
     let
 
+      fun mk_fix s = (Binding.name s, NONE, NoSyn)
+
+      val raw_pattern : string pattern list parser =
+        let
+          val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In) (* XXX rename *)
+          val atom =  (Args.$$$ "asm" >> K Asm) ||
+            (Args.$$$ "concl" >> K Concl) || (Args.$$$ "goal" >> K Prop) || (Parse.term >> Term)
+          val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
+          val for = Args.$$$ "for" |-- Args.parens (Scan.repeat Args.name) >> (single o For) (* XXX Parse.simple_fixes instead of Args.name *)
+
+          fun append_default [] = [Concl, In]
+            | append_default (ps as Term _ :: _) = Concl :: In :: ps
+            | append_default ps = ps
+
+        in Scan.repeat (sep_atom || for) >> (flat #> rev #> append_default) end
+
+      fun ctxt_lift (scan : 'a parser) f = fn (ctxt : Context.generic, toks) =>
+        let
+          val (r, toks') = scan toks
+          val r' = f ctxt r
+        in (r', (ctxt, toks' : Token.T list))end
+      val _ = ctxt_lift : 'a parser -> (Context.generic -> 'a  -> 'b) -> 'b context_parser (*XXX*)
+
       (* The pattern parser, parses a list of pattern elements. *)
       val pattern_parser : term pattern list context_parser =
         let
-          (* We need to parse the terms in our patterns from right to left,
-             so we first parse them as a list of tokens that we can later process from right to left.*)
-          datatype pattern_token = PairToken of string * string | ForToken of string list;
-          val tokenizer : pattern_token list parser =
+          fun prep_pats ctxt (ps : string pattern list) =
             let
-              val keyword_reader = (Args.$$$ "at" || Args.$$$ "in");
-              val atom_reader = (Args.$$$ "asm" || Args.$$$ "concl" || Args.$$$ "goal") || Parse.term
-              val for_reader = Args.$$$ "for" |-- Args.parens (Scan.repeat (Scan.unless keyword_reader Args.name));
-            in
-              Scan.repeat ((for_reader >> ForToken) || (keyword_reader -- atom_reader >> PairToken))
-            end;
-            
-          val context_tokenizer = Scan.lift tokenizer #> (fn (r, (ctxt, ts)) => ((Context.proof_of ctxt, r), (ctxt, ts)))
-          
-          fun tokens_to_patterns (ctxt, token_list) =
-            let
-              (* While parsing the patterns, we need to add fixes for the introduced identifiers,
-                 so that they are highlighted properly in jEdit. During this, we need to pass a
-                 context and a list of identifier name pairs around. *)
-              type mappings = (string * string) list;
-              type fixes_info = Proof.context * mappings;
-              val get_ctxt : fixes_info -> Proof.context = #1;
-              val get_mappings : fixes_info -> mappings = #2;
-            
-              (* Takes a list of identifiers and information about the previously introduced fixes
-                 and adds new fixes for those identifiers. *)
-              fun add_fixes (idents : string list) ((ctxt, mappings) : fixes_info) =
-                let
-                  fun to_raw_var name = (Binding.name name, NONE, NoSyn);
-                  val (new_idents, ctxt') = Proof_Context.add_fixes (map to_raw_var idents) ctxt
-                  val mappings' = mappings @ (idents ~~ new_idents)
-                in
-                  (ctxt', mappings') : fixes_info
-                end;
-            
-              fun read_pattern info string =
-                let                       
-                  val add_pattern_fixes =
-                    collect_identifiers
-                    #> the_default []
-                    #> map (#1)
-                    #> add_fixes;
-                  
-                  (* Parse the string into a term. *)
-                  val ctxt = get_ctxt info;
-                  val pattern = Proof_Context.read_term_pattern ctxt string
-                  (* Add all introduced identifiers as fixes to the context. *)
-                  val fixes' = add_pattern_fixes pattern info
+              fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
+                | is_hole_const _ = false
+
+              fun add_constrs ctxt n (Abs (x, T, t)) =
+                  let
+                    val (x', ctxt') = yield_singleton Proof_Context.add_fixes (mk_fix x) ctxt
+                  in
+                    (case add_constrs ctxt' (n+1) t of
+                      NONE => NONE
+                    | SOME ((ctxt'', n', xs), t') =>
+                        let
+                          val U = Type_Infer.mk_param n []
+                          val u = Type.constraint (U --> dummyT) (Abs (x, T, t'))
+                        in SOME ((ctxt'', n', (x', U) :: xs), u) end)
+                  end
+                | add_constrs ctxt n (l $ r) =
+                  (case add_constrs ctxt n l of
+                    SOME (c, l') => SOME (c, l' $ r)
+                  | NONE =>
+                    (case add_constrs ctxt n r of
+                      SOME (c, r') => SOME (c, l $ r')
+                    | NONE => NONE))
+                | add_constrs ctxt n t =
+                  if is_hole_const t then SOME ((ctxt, n, []), t) else NONE
     
-                  (* We only add the fixes to get nice highlighting in Isabelle, *)              
-                  fun rename_free (n, n') (f as Free (name, typ)) = if n' = name then Free (n, typ) else f
-                    | rename_free _ t = t;
-                  val rename_any = fold rename_free
-                  fun rename mappings = Term.map_aterms (rename_any mappings);
-                in
-                  (fixes', rename (get_mappings info) pattern)
-                end;
-             
-              fun string_to_pattern "at" (info, patterns) = (info, At :: patterns)
-                | string_to_pattern "in" (info, patterns) = (info, In :: patterns)
-                | string_to_pattern "asm" (info, patterns) = (info, Asm :: patterns)
-                | string_to_pattern "concl" (info, patterns) = (info, Concl :: patterns)
-                | string_to_pattern "goal" (info, patterns) = (info, Prop :: patterns)
-                | string_to_pattern t (info, patterns) = read_pattern info t ||> (fn t => Term t :: patterns);
-             
-              (* Translates a token to a pattern element. It also adds new fixes to the context. *)
-              fun token_to_pattern (PairToken (a, b)) c =
-                    string_to_pattern b c |> string_to_pattern a
-                | token_to_pattern (ForToken names) (s, patterns) =
-                    (add_fixes names s, For names :: patterns);
-            in
-              fold_rev token_to_pattern token_list ((hole_syntax ctxt, []), []) |> #2 |> rev
-            end;
-          
-          (* Patterns should have an implicit in concl appended when they end in a term pattern. *)
-          fun append_default [] = [In, Concl]
-            | append_default (ps as Term _ :: _) = In :: Concl :: ps
-            | append_default ps = ps
+              fun prep (Term s) (n, ctxt) =
+                  let
+                    val t = (*Syntax.parse_term*)Proof_Context.read_term_pattern (hole_syntax ctxt) s
+                    val ((ctxt', n', bs), t') =
+                      the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
+                  in (Term (t'(*, bs*)), (n', ctxt')) end
+                | prep (For ss) (n, ctxt) =
+                  let val (ss', ctxt') = Proof_Context.add_fixes (map mk_fix ss) ctxt
+                  in (For ss', (n, ctxt')) end
+                | prep At (n,ctxt) = (At, (n, ctxt))
+                | prep In (n,ctxt) = (In, (n, ctxt))
+                | prep Concl (n,ctxt) = (Concl, (n, ctxt))
+                | prep Asm (n,ctxt) = (Asm, (n, ctxt))
+                | prep Prop (n,ctxt) = (Prop, (n, ctxt))
+    
+              val (xs, (_, ctxt')) = fold_map prep ps (0, ctxt)
+    
+            in (xs, ctxt') end
         in
-          context_tokenizer >> tokens_to_patterns >> append_default
+          ctxt_lift raw_pattern (fst oo prep_pats o Context.proof_of)
         end;
 
       val instantiation_parser = (Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)
