@@ -179,10 +179,6 @@ struct
       else recursive_matches
     end;
 
-  (* Match a focusterm against a pattern. *)
-  fun focusterm_matches thy pattern ((subterm , _) : focusterm) =
-    Pattern.matches thy ( pattern, subterm)
-
   (* Find all subterms that might be a valid point to apply a rule. *)
   val valid_match_points =
     let
@@ -218,15 +214,6 @@ struct
       Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes))
       #> Proof_Context.set_mode Proof_Context.mode_pattern
     end
-
-  (* Get a list of all identifiers introduced on the way to the hole. *)
-  fun collect_identifiers (Abs (n, t, a)) = 
-        Option.map (curry op:: (n, t)) (collect_identifiers a)
-    | collect_identifiers (l $ r) = 
-        (case collect_identifiers l of
-          SOME xs => SOME xs
-        | NONE => collect_identifiers r)
-    | collect_identifiers term = if is_hole term then SOME [] else NONE;
 
   (* Find a subterm of the focusterm matching the pattern. *)
   fun find_matches thy pattern_list =
