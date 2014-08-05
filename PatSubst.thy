@@ -34,7 +34,7 @@ structure PatSubst =
 struct
   (* Data type to represent a single pattern step.
      Patterns entered by the user will be of type "pattern list".  *)
-  datatype pattern = At | In | Term of term | Concl | Asm | Prop | For of string list;
+  datatype 'a pattern = At | In | Term of 'a | Concl | Asm | Prop | For of string list;
 
   (* Some types/terminology used in the code below: *)
 
@@ -327,8 +327,9 @@ struct
      TODO: Merge with subst method in 'src/Tools/eqsubst.ML'. *)
   val setup =
     let
+
       (* The pattern parser, parses a list of pattern elements. *)
-      val pattern_parser : pattern list context_parser =
+      val pattern_parser : term pattern list context_parser =
         let
           (* We need to parse the terms in our patterns from right to left,
              so we first parse them as a list of tokens that we can later process from right to left.*)
