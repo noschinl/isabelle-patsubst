@@ -407,13 +407,21 @@ struct
               fun pc ctxt = Syntax.pretty_term ctxt #> Pretty.writeln
 
               (* XXX same as move_below? *)
-              fun ft_fun ctxt : ftT = fn _ =>
+              fun ft_fun ctxt : ftT = fn tyenv =>
                 fn (l $ _, pos) => (tracing "ft_fun"; pc ctxt l; (l, below_left pos))
+                 | u as (Abs (_, T, _ $ Bound 0), _) => let
+                     val f = ft_fun ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
+                   in f tyenv u end
                  | (t, _) => raise TERM ("ft_fun", [t])
-              fun ft_arg ctxt : ftT = fn _ =>
+              and
+                ft_arg ctxt : ftT = fn tyenv =>
                 fn (_ $ r, pos) => (tracing "ft_arg"; pc ctxt r; (r, below_right pos))
+                 | u as (Abs (_, T, _ $ Bound 0), _) => let
+                     val f = ft_arg ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
+                   in f tyenv u end
                  | (t, _) => raise TERM ("ft_arg", [t])
-              fun ft_abs ctxt (s,T) : ftT = fn tyenv =>
+              and
+                ft_abs ctxt (s,T) : ftT = fn tyenv =>
                 let
                   val u = Free (s, Type.devar tyenv T)
                   val desc = below_abs (SOME s)
