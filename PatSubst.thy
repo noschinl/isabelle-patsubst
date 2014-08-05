@@ -185,6 +185,7 @@ struct
       fun is_valid (l $ _) = is_valid l
         | is_valid (Abs (_, _, a)) = is_valid a
         | is_valid (Var _) = false
+        | is_valid (Bound _) = false
         | is_valid _ = true;
     in
       find_subterms (#1 #> is_valid)
