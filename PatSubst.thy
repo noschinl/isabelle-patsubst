@@ -25,7 +25,7 @@ ML {*
   pattern language.
 
   The patterns accepted by pat_subst are of the following form:
-    <atom>    ::= <term> | concl | asm | prop
+    <atom>    ::= <term> | concl | asm | goal
     <pattern> ::= (in <atom> | at <atom> | for <names>) [<pattern>]
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
