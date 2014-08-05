@@ -7,7 +7,7 @@ fun CONCAT' tacs = fold_rev (curry op APPEND') tacs (K no_tac);
 fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 *}
 
-consts patsubst_HOLE :: 'a
+consts patsubst_HOLE :: "'a :: {}"
 notation patsubst_HOLE ("HOLE")
 notation patsubst_HOLE ("\<box>")
 
