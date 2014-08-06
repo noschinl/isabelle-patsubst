@@ -15,7 +15,6 @@ lemma eta_expand:
   fixes f :: "'a :: {} \<Rightarrow> 'b :: {}" shows "f \<equiv> (\<lambda>x. f x)"
   by (rule reflexive)
 
-declare [[ML_print_depth=20]]
 ML {*
 (*
   Author: Christoph Traut, TU Muenchen
@@ -220,12 +219,10 @@ struct
   fun find_matches thy pattern_list =
     let
       fun move_term thy (t, off) (ft as (u, _) : focusterm, tyenv) =
-        (tracing "enter"; @{print} (Thm.cterm_of thy t); @{print} (Thm.cterm_of thy u);
         let
           val (tyenv', _) = Pattern.match thy (t,u) (tyenv, Vartab.empty)
-        in SOME (off tyenv' ft |> tap (@{print} o Thm.cterm_of thy o fst), tyenv') end
+        in SOME (off tyenv' ft, tyenv') end
         handle Pattern.MATCH => NONE
-        )
 
       fun lift_tyenv_seq f = fn (ft, tyenv) => Seq.map (rpair tyenv) (f ft)
       fun lift_tyenv_opt f = fn (ft, tyenv) => Option.map (rpair tyenv) (f ft)
@@ -264,7 +261,7 @@ struct
             val th_vars = Term.add_vars (Thm.prop_of thm) []
           in
             case AList.lookup (op=) th_vars x of
-              NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem") (*XXX pretty-print schematic*)
+              NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem")
             | SOME T => T
           end
 
@@ -404,18 +401,16 @@ struct
           fun f ctxt = (*TODO rename*)
             let
 
-              fun pc ctxt = Syntax.pretty_term ctxt #> Pretty.writeln
-
               (* XXX same as move_below? *)
               fun ft_fun ctxt : ftT = fn tyenv =>
-                fn (l $ _, pos) => (tracing "ft_fun"; pc ctxt l; (l, below_left pos))
+                fn (l $ _, pos) => (l, below_left pos)
                  | u as (Abs (_, T, _ $ Bound 0), _) => let
                      val f = ft_fun ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
                    in f tyenv u end
                  | (t, _) => raise TERM ("ft_fun", [t])
               and
                 ft_arg ctxt : ftT = fn tyenv =>
-                fn (_ $ r, pos) => (tracing "ft_arg"; pc ctxt r; (r, below_right pos))
+                fn (_ $ r, pos) => (r, below_right pos)
                  | u as (Abs (_, T, _ $ Bound 0), _) => let
                      val f = ft_arg ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
                    in f tyenv u end
@@ -428,9 +423,7 @@ struct
                   val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
                   fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
                 in
-                  fn (Abs (_,_,t'),pos) =>
-                    (tracing "ft_abs"; @{print} (s,T); pc ctxt t';
-                    (subst_bound (u, t'), desc pos))
+                  fn (Abs (_,_,t'),pos) => (subst_bound (u, t'), desc pos)
                   | (t,pos) => (t $ u, desc (pos o eta_expand))
                 end
                 (* should there be error checking like in dest_abs, checking for type error? *)
