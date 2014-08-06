@@ -435,7 +435,7 @@ struct
                 end
                 (* should there be error checking like in dest_abs, checking for type error? *)
 
-              fun descend_hole ctxt fixes (Abs (x, T, t)) =
+              fun descend_hole ctxt fixes (Abs (_, _, t)) =
                   (case descend_hole ctxt fixes t of
                     NONE => NONE
                   | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs ctxt fix)
