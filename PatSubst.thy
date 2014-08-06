@@ -64,12 +64,7 @@ struct
 
  (* A focusterm represents a subterm. It is a tuple (t, p), consisting
     of the subterm t itself and its subterm position p. *)
-  type focusterm = term * subterm_position
-
-  infix 3 ft_app
-  fun ft1 ft_app ft2 = fn tyenv => ft1 tyenv o ft2 tyenv
-  type ftT = Type.tyenv -> focusterm -> focusterm
-  val _ = op ft_app : ftT * ftT -> ftT
+  type focusterm = Type.tyenv * term * subterm_position
 
   (* changes object "=" to meta "==" which prepares a given rewrite rule. *)
   fun prep_meta_eq ctxt =
@@ -90,118 +85,85 @@ struct
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_conv; 
     in inner #> outer end;
 
-  fun ft_fun tyenv =
-    fn (l $ _, pos) => (l, below_left pos)
-     | u as (Abs (_, T, _ $ Bound 0), _) => let
-         val f = ft_fun ft_app ft_abs (NONE, T)
-       in f tyenv u end
-     | (t, _) => raise TERM ("ft_fun", [t])
-  and
-    ft_arg tyenv =
-    fn (_ $ r, pos) => (r, below_right pos)
-     | u as (Abs (_, T, _ $ Bound 0), _) => let
-         val f = ft_arg ft_app ft_abs (NONE, T)
-       in f tyenv u end
-     | (t, _) => raise TERM ("ft_arg", [t])
-  and
-    ft_abs (s,T) tyenv =
+  fun ft_abs (s,T) (ft as (tyenv, _, _)) = (* XXX *)
     let
       val u = Free (the_default "__dummy__" s (*XXX*), Type.devar tyenv T)
       val desc = below_abs s
       val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
       fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
+      fun f (tyenv, Abs (_,_,t'),pos) = (tyenv, subst_bound (u, t'), desc pos)
+        | f (tyenv, t,pos) = (tyenv, t $ u, desc (pos o eta_expand))
     in
-      fn (Abs (_,_,t'),pos) => (subst_bound (u, t'), desc pos)
-      | (t,pos) => (t $ u, desc (pos o eta_expand))
+      f ft
     end
     (* should there be error checking like in dest_abs, checking for type error? *)
 
+  fun ft_fun (tyenv, l $ _, pos) = (tyenv, l, below_left pos)
+    | ft_fun (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_fun o ft_abs (NONE, T)) ft
+    | ft_fun (_, t, _) = raise TERM ("ft_fun", [t])
 
-  (* Functions for moving down through focusterms. *)
-  fun move_below_left (((l $ _), conversion) : focusterm) =
-        (l, below_left conversion) : focusterm
-    | move_below_left ft = raise TERM ("move_below_left", [#1 ft]);
-  fun move_below_right (((_ $ r), conversion) : focusterm) =
-        (r, below_right conversion) : focusterm
-    | move_below_right ft = raise TERM ("move_below_right", [#1 ft]);
-  fun move_below_abs ident ((Abs (_, typ, sub), conversion) : focusterm) =
-        let
-          (* We don't keep loose bounds in our terms, replace them by free variables.
-             Either use the identifier supplied by the user, or use a dummy name. *)
-          (* TODO: Rename any old occurrences of the new identifier.
-                   The new identifier should always take precedence. *)
-          val new_ident = the_default "__dummy__" ident;
-          val replace_bound = curry Term.subst_bound (Free (new_ident, typ)); 
-        in (replace_bound sub, below_abs ident conversion) : focusterm end
-    | move_below_abs _ ft = raise TERM ("move_below_abs", [#1 ft]);
-    
-  (* Move to B in !!x_1 ... x_n. B. *)
-  fun move_below_params (ft as (t, _) : focusterm) =
-    if Logic.is_all t 
-    then ft
-         |> move_below_right
-         |> move_below_abs NONE
-         |> move_below_params
-    else ft;
-    
-  (* Move to B in !!x_1 ... x_n. B.
-     Intoduce identifers i_1 .. i_k for x_(n-k+1) .. x_n*)
-  fun move_below_for idents (ft as (t, _) : focusterm) =
+  fun ft_arg (tyenv, _ $ r, pos) = (tyenv, r, below_right pos)
+    | ft_arg (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_arg o ft_abs (NONE, T)) ft
+    | ft_arg (_, t, _) = raise TERM ("ft_arg", [t])
+
+  (* Move to B in !!x_1 ... x_n. B. Do not eta-expand *)
+  fun ft_params (ft as (_, t, _) : focusterm) =
+    case t of
+      Const (@{const_name "Pure.all"}, _) $ Abs (_,T,_) =>
+        (ft_params o ft_abs (NONE, T) o ft_arg) ft
+    | Const (@{const_name "Pure.all"}, _) =>
+        (ft_params o ft_arg) ft
+    | _ => ft
+
+  fun ft_all ident (ft as (_, Const (@{const_name "Pure.all"}, T) $ _, _) : focusterm) =
+      let val (U, _) = T |> dest_funT |> fst |> dest_funT
+       in (ft_abs (ident, U) o ft_arg) ft end
+    | ft_all _ (_, t, _) = raise TERM ("ft_all", [t])
+
+  fun ft_for idents (ft as (_, t, _) : focusterm) =
     let
-      fun recurse ident idents =
-        move_below_right
-        #> move_below_abs ident
-        #> move_below_for idents
-        
-      fun count_alls term =
-        if Logic.is_all term 
-        then 1 + count_alls (Logic.dest_all term |> #2)
-        else 0;
-        
-      val num_alls = count_alls t;
-    in
-      if num_alls = 0 andalso length idents = 0 then SOME ft
-      else case Int.compare(num_alls, length idents) of
-             EQUAL   => recurse (idents |> hd |> SOME) (tl idents) ft
-           | GREATER => recurse NONE idents ft
-           | LESS    => NONE
-    end;
-    
-  (* Move to B in A1 Pure.imp ... Pure.imp An Pure.imp B. *)
-  fun move_below_concl (ft as (t, _) : focusterm) =
+      fun f rev_idents (Const (@{const_name "Pure.all"}, _) $ t) =
+          let
+           val (rev_idents', desc) = f rev_idents (case t of Abs (_,_,u) => u | _ => t)
+          in
+            case rev_idents' of
+              [] => ([], desc o ft_all NONE)
+            | (x :: xs) => (xs , desc o ft_all x)
+          end
+        | f rev_idents _ = (rev_idents, I)
+      val desc = snd (f (rev idents) t)
+    in desc ft end
+
+  fun ft_concl (ft as (_, t, _) : focusterm) =
     case t of
-      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => ft |> move_below_right |> move_below_concl
-    | _ =>  ft;
-    
-  (* Move to the A's in A1 Pure.imp ... Pure.imp An Pure.imp B. *)
-  fun move_below_assms (ft as (t, _) : focusterm) =
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl o ft_arg) ft
+    | _ => ft
+
+  fun ft_assm (ft as (_, t, _) : focusterm) =
     case t of
-      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ =>
-        Seq.cons (ft |> move_below_left |> move_below_right)
-                 (ft |> move_below_right |> move_below_assms)
-    | _ =>  Seq.empty;
-  
-  (* Descend below a judment, if there is one. *)
-  fun move_below_judgment thy (ft as (t, _) : focusterm) =
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl o ft_arg o ft_fun) ft
+    | _ => raise TERM ("ft_assm", [t])
+
+  fun ft_judgment thy (ft as (_, t, _) : focusterm) =
     if Object_Logic.is_judgment thy t
-    then ft |> move_below_right
+    then ft_arg ft
     else ft;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
-  fun find_subterms condition (focusterm as (subterm, _) : focusterm) =
+  fun find_subterms condition (ft as (_, t, _) : focusterm) =
     let
       val recurse = find_subterms condition;    
-      val recursive_matches = case subterm of
-          _ $ _ => Seq.append (focusterm |> move_below_left |> recurse) (focusterm |> move_below_right |> recurse)
-        | Abs _ => focusterm |> move_below_abs NONE |> recurse
-        | _     => Seq.empty;
+      val recursive_matches = case t of
+          _ $ _ => Seq.append (ft |> ft_fun |> recurse) (ft |> ft_arg |> recurse)
+        | Abs (_,T,_) => ft |> ft_abs (NONE, T) |> recurse
+        | _ => Seq.empty;
     in
       (* If the condition is met, then the current focusterm is part of the
          sequence of results. Otherwise, only the results of the recursive
          application are. *)
-      if condition focusterm
-      then Seq.cons focusterm recursive_matches
+      if condition ft
+      then Seq.cons ft recursive_matches
       else recursive_matches
     end;
 
@@ -214,7 +176,7 @@ struct
         | is_valid (Bound _) = false
         | is_valid _ = true;
     in
-      find_subterms (#1 #> is_valid)
+      find_subterms (#2 #> is_valid )
     end;
 
   val hole_name = "_HOLE_"
@@ -245,24 +207,29 @@ struct
   (* Find a subterm of the focusterm matching the pattern. *)
   fun find_matches thy pattern_list =
     let
-      fun move_term thy (t, off) (ft as (u, _) : focusterm, tyenv) =
+      fun move_term thy (t, off) (ft as (tyenv, u, _) : focusterm) =
         let
           val (tyenv', _) = Pattern.match thy (t,u) (tyenv, Vartab.empty)
-        in SOME (off tyenv' ft, tyenv') end
+          val ft' = (tyenv', #2 ft, #3 ft)
+        in SOME (off ft') end (* XXX *)
         handle Pattern.MATCH => NONE
 
-      fun lift_tyenv_seq f = fn (ft, tyenv) => Seq.map (rpair tyenv) (f ft)
-      fun lift_tyenv_opt f = fn (ft, tyenv) => Option.map (rpair tyenv) (f ft)
+      fun seq_unfold f ft =
+        case f ft of
+          NONE => Seq.empty
+        | SOME ft' => Seq.cons ft' (seq_unfold f ft')
 
-      fun apply_pat At = Seq.map (apfst (move_below_judgment thy))
-        | apply_pat In = Seq.maps (lift_tyenv_seq valid_match_points)
-        | apply_pat Asm = Seq.maps (lift_tyenv_seq (move_below_params #> move_below_assms))
-        | apply_pat Concl = Seq.map (apfst (move_below_params #> move_below_concl))
+      val _ = seq_unfold (try ft_assm)
+
+      fun apply_pat At = Seq.map (ft_judgment thy)
+        | apply_pat In = Seq.maps (valid_match_points)
+        | apply_pat Asm = Seq.maps (seq_unfold (try ft_assm) o ft_params)
+        | apply_pat Concl = Seq.map (ft_concl o ft_params)
         | apply_pat Prop = I
-        | apply_pat (For idents) = Seq.map_filter (lift_tyenv_opt (move_below_for idents))
+        | apply_pat (For idents) = Seq.map_filter (try (ft_for (map SOME idents))) (*XXX*)
         | apply_pat (Term x) = Seq.map_filter ( (move_term thy x))
 
-      fun apply_pats ft = (ft, Vartab.empty)
+      fun apply_pats ft = ft
         |> Seq.single
         |> fold apply_pat pattern_list
 
@@ -327,9 +294,9 @@ struct
   fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
     let
       val thy = Proof_Context.theory_of ctxt
-      val matches = find_matches thy pattern (t, I);
+      val matches = find_matches thy pattern (Vartab.empty, t, I);
       fun rewrite_conv rule insty ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
-      fun tac ((_, position), tyenv) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
+      fun tac (tyenv, _, position) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
     in
       SEQ_CONCAT (Seq.map tac matches)
     end);
@@ -431,26 +398,26 @@ struct
               fun descend_hole fixes (Abs (_, _, t)) =
                   (case descend_hole fixes t of
                     NONE => NONE
-                  | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs (apfst SOME fix))
+                  | SOME (fix :: fixes', pos) => SOME (fixes', pos o ft_abs (apfst SOME fix))
                   | SOME ([], _) => raise Match (* XXX -- check phases modified binding *))
                 | descend_hole fixes (t as l $ r) =
                   let val (f, _) = strip_comb t
                   in
                     if is_hole f
-                    then SOME (fixes, K I)
+                    then SOME (fixes, I)
                     else
                       (case descend_hole fixes l of
-                        SOME (fixes', pos) => SOME (fixes', pos ft_app ft_fun)
+                        SOME (fixes', pos) => SOME (fixes', pos o ft_fun)
                       | NONE =>
                         (case descend_hole fixes r of
-                          SOME (fixes', pos) => SOME (fixes', pos ft_app ft_arg)
+                          SOME (fixes', pos) => SOME (fixes', pos o ft_arg)
                         | NONE => NONE))
                   end
                 | descend_hole fixes t =
-                  if is_hole t then SOME (fixes, K I) else NONE
+                  if is_hole t then SOME (fixes, I) else NONE
 
               fun prep (Term (t, fixes)) =
-                  let val f = descend_hole (rev fixes) #> the_default ([], K I) #> snd
+                  let val f = descend_hole (rev fixes) #> the_default ([], I) #> snd
                   in Term (t, f t) end
                 | prep (For ss) = (For ss)
                 | prep At = At
