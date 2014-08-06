@@ -93,21 +93,22 @@ struct
   fun ft_fun tyenv =
     fn (l $ _, pos) => (l, below_left pos)
      | u as (Abs (_, T, _ $ Bound 0), _) => let
-         val f = ft_fun ft_app ft_abs ("__dummy__" (*XXX*), T)
+         val f = ft_fun ft_app ft_abs (NONE, T)
        in f tyenv u end
      | (t, _) => raise TERM ("ft_fun", [t])
   and
     ft_arg tyenv =
     fn (_ $ r, pos) => (r, below_right pos)
      | u as (Abs (_, T, _ $ Bound 0), _) => let
-         val f = ft_arg ft_app ft_abs ("__dummy__" (*XXX*), T)
+         val f = ft_arg ft_app ft_abs (NONE, T)
        in f tyenv u end
      | (t, _) => raise TERM ("ft_arg", [t])
   and
     ft_abs (s,T) tyenv =
     let
-      val u = Free (s, Type.devar tyenv T)
-      val desc = below_abs (SOME s)
+      val s' = the_default "__dummy__" s (*XXX*)
+      val u = Free (s', Type.devar tyenv T)
+      val desc = below_abs (SOME s')
       val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
       fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
     in
@@ -431,7 +432,7 @@ struct
               fun descend_hole fixes (Abs (_, _, t)) =
                   (case descend_hole fixes t of
                     NONE => NONE
-                  | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs fix)
+                  | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs (apfst SOME fix))
                   | SOME ([], _) => raise Match (* XXX -- check phases modified binding *))
                 | descend_hole fixes (t as l $ r) =
                   let val (f, _) = strip_comb t
