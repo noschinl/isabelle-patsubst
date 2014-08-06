@@ -247,8 +247,8 @@ struct
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
-  fun inst_thm _ _ ([], _) thm = thm
-    | inst_thm ctxt idents (insts, tyenv) thm =
+  fun inst_thm _  _ ([], _) thm = thm
+    | inst_thm ctxt idents (raw_insts, tyenv) thm =
       let
         (* Replace any identifiers with their corresponding bound variables. *)
         val replace_identifiers =
@@ -258,36 +258,45 @@ struct
           in
             Term.map_aterms (subst idents)
           end;
-    
-        val th_vars = Term.add_vars (Thm.prop_of thm) []
 
-        fun find_var (x as (s, _)) =
-          case AList.lookup (op=) th_vars x of
-            NONE => error ("Could not find variable " ^ s ^ " in the rewritten subterm.") (*XXX pretty-print schematic*)
-          | SOME T => T
-    
-        fun prep_inst (x, t) =
+        fun find_var x =
+          let
+            val th_vars = Term.add_vars (Thm.prop_of thm) []
+          in
+            case AList.lookup (op=) th_vars x of
+              NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem") (*XXX pretty-print schematic*)
+            | SOME T => T
+          end
+
+        fun prep_inst off (x, t) =
           let
             val t' = t
               |> Envir.subst_term_types tyenv
               |> replace_identifiers
-            val x' = Var (x, fastype_of t')
+              |> map_types (map_type_tvar (fn ((x,idx), sort) => TVar ((x, idx + off), sort)))
+            val x' =  (x, fastype_of t')
           in (x', t') end
-        val insts' = map prep_inst insts
-        val tyinsts = insts'
-          |> map fst
-          |> distinct (op aconv)
-          |> map (fn Var (x, T) => (find_var x, T))
-          |> filter (Term.is_TVar o fst)
-        val thy = Thm.theory_of_thm thm
+
+        val thy = Proof_Context.theory_of ctxt
         fun certs f = map (pairself (f thy))
-        val x = (certs Thm.ctyp_of tyinsts, certs Thm.cterm_of insts')
-        val _ = warning "foo"
-        val _ = @{print} (fst x)
-        val _ = @{print} (snd x)
-        val instantiate = Drule.instantiate_normalize x
+
+        val raw_insts' = map (prep_inst (Thm.maxidx_of thm + 1)) raw_insts
+        val inst_maxidx = fold (Term.maxidx_term o snd) raw_insts' 0
+
+        val insts = raw_insts' |> map (apfst Var) |> certs Thm.cterm_of
+
+        val tyinsts =
+          let
+            val tyassoc = map (fn ((x, T), _) => (find_var x, T)) raw_insts'
+            val env = fst (fold (Sign.typ_unify thy) tyassoc (Vartab.empty, inst_maxidx))
+          in fold Term.add_tvarsT (map fst tyassoc) []
+            |> map_filter (fn x as (y,_) => case Vartab.lookup env y of
+                NONE => NONE
+              | SOME (_, U) => SOME (TVar x, U))
+            |> certs Thm.ctyp_of
+          end
       in
-        instantiate thm
+        Drule.instantiate_normalize (tyinsts, insts) thm
       end;
 
   (* Rewrite in subgoal i. *)
