@@ -106,9 +106,8 @@ struct
   and
     ft_abs (s,T) tyenv =
     let
-      val s' = the_default "__dummy__" s (*XXX*)
-      val u = Free (s', Type.devar tyenv T)
-      val desc = below_abs (SOME s')
+      val u = Free (the_default "__dummy__" s (*XXX*), Type.devar tyenv T)
+      val desc = below_abs s
       val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
       fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
     in
