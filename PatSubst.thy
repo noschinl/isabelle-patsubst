@@ -90,6 +90,33 @@ struct
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_conv; 
     in inner #> outer end;
 
+  fun ft_fun tyenv =
+    fn (l $ _, pos) => (l, below_left pos)
+     | u as (Abs (_, T, _ $ Bound 0), _) => let
+         val f = ft_fun ft_app ft_abs ("__dummy__" (*XXX*), T)
+       in f tyenv u end
+     | (t, _) => raise TERM ("ft_fun", [t])
+  and
+    ft_arg tyenv =
+    fn (_ $ r, pos) => (r, below_right pos)
+     | u as (Abs (_, T, _ $ Bound 0), _) => let
+         val f = ft_arg ft_app ft_abs ("__dummy__" (*XXX*), T)
+       in f tyenv u end
+     | (t, _) => raise TERM ("ft_arg", [t])
+  and
+    ft_abs (s,T) tyenv =
+    let
+      val u = Free (s, Type.devar tyenv T)
+      val desc = below_abs (SOME s)
+      val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
+      fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
+    in
+      fn (Abs (_,_,t'),pos) => (subst_bound (u, t'), desc pos)
+      | (t,pos) => (t $ u, desc (pos o eta_expand))
+    end
+    (* should there be error checking like in dest_abs, checking for type error? *)
+
+
   (* Functions for moving down through focusterms. *)
   fun move_below_left (((l $ _), conversion) : focusterm) =
         (l, below_left conversion) : focusterm
@@ -398,68 +425,41 @@ struct
       fun prep_args ctxt ((raw_pats, raw_ths), raw_insts) =
         let
 
-          fun f ctxt = (*TODO rename*)
+          val f = (*TODO rename*)
             let
 
-              (* XXX same as move_below? *)
-              fun ft_fun ctxt : ftT = fn tyenv =>
-                fn (l $ _, pos) => (l, below_left pos)
-                 | u as (Abs (_, T, _ $ Bound 0), _) => let
-                     val f = ft_fun ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
-                   in f tyenv u end
-                 | (t, _) => raise TERM ("ft_fun", [t])
-              and
-                ft_arg ctxt : ftT = fn tyenv =>
-                fn (_ $ r, pos) => (r, below_right pos)
-                 | u as (Abs (_, T, _ $ Bound 0), _) => let
-                     val f = ft_arg ctxt ft_app ft_abs ctxt ("__dummy__" (*XXX*), T)
-                   in f tyenv u end
-                 | (t, _) => raise TERM ("ft_arg", [t])
-              and
-                ft_abs ctxt (s,T) : ftT = fn tyenv =>
-                let
-                  val u = Free (s, Type.devar tyenv T)
-                  val desc = below_abs (SOME s)
-                  val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
-                  fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
-                in
-                  fn (Abs (_,_,t'),pos) => (subst_bound (u, t'), desc pos)
-                  | (t,pos) => (t $ u, desc (pos o eta_expand))
-                end
-                (* should there be error checking like in dest_abs, checking for type error? *)
-
-              fun descend_hole ctxt fixes (Abs (_, _, t)) =
-                  (case descend_hole ctxt fixes t of
+              fun descend_hole fixes (Abs (_, _, t)) =
+                  (case descend_hole fixes t of
                     NONE => NONE
-                  | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs ctxt fix)
+                  | SOME (fix :: fixes', pos) => SOME (fixes', pos ft_app ft_abs fix)
                   | SOME ([], _) => raise Match (* XXX -- check phases modified binding *))
-                | descend_hole ctxt fixes (t as l $ r) =
+                | descend_hole fixes (t as l $ r) =
                   let val (f, _) = strip_comb t
                   in
                     if is_hole f
                     then SOME (fixes, K I)
                     else
-                      (case descend_hole ctxt fixes l of
-                        SOME (fixes', pos) => SOME (fixes', pos ft_app ft_fun ctxt)
+                      (case descend_hole fixes l of
+                        SOME (fixes', pos) => SOME (fixes', pos ft_app ft_fun)
                       | NONE =>
-                        (case descend_hole ctxt fixes r of
-                          SOME (fixes', pos) => SOME (fixes', pos ft_app ft_arg ctxt)
+                        (case descend_hole fixes r of
+                          SOME (fixes', pos) => SOME (fixes', pos ft_app ft_arg)
                         | NONE => NONE))
                   end
-                | descend_hole _ fixes t =
+                | descend_hole fixes t =
                   if is_hole t then SOME (fixes, K I) else NONE
 
-              fun prep ctxt (Term (t, fixes)) =
-                  let val f = descend_hole ctxt (rev fixes) #> the_default ([], K I) #> snd
+              fun prep (Term (t, fixes)) =
+                  let val f = descend_hole (rev fixes) #> the_default ([], K I) #> snd
                   in Term (t, f t) end
-                | prep _ (For ss) = (For ss)
-                | prep _ At = At
-                | prep _ In = In
-                | prep _ Concl = Concl
-                | prep _ Asm = Asm
-                | prep _ Prop = Prop
+                | prep (For ss) = (For ss)
+                | prep At = At
+                | prep In = In
+                | prep Concl = Concl
+                | prep Asm = Asm
+                | prep Prop = Prop
 
-            in map (prep ctxt) end
+            in map prep end
 
           fun check_terms ctxt ps (insts_vars, insts_ts) =
             let
@@ -490,7 +490,7 @@ struct
           val (pats, ctxt') = prep_pats ctxt raw_pats
           val insts = prep_insts ctxt' raw_insts
           val (pats', insts') = check_terms ctxt' pats insts
-          val pats'' = f ctxt' pats'
+          val pats'' = f pats'
         in (((pats'', ths), insts'), ctxt') end
 
       val instantiation_parser = Scan.option
