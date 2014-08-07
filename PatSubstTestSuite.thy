@@ -126,6 +126,18 @@ lemma
 by (pat_subst in "\<lambda>any_identifier_works. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. any_identifier_works < x + 1")
    (rule assms)
 
+lemma
+  assumes "P (2 + 1)"
+  shows "\<And>x y. P (1 + 2 :: nat)"
+by (pat_subst in "P (1 + 2)" at "_" for (x) add.commute)
+   (rule assms)
+
+lemma
+  assumes "\<And>x y. P (y + x)"
+  shows "\<And>x y. P (x + y :: nat)"
+by (pat_subst in "P (x + _)" at "_" for (x y) add.commute)
+   (rule assms)
+
 (* The for-keyword. *)
 lemma
   assumes "\<And>x y z. y + x + z = z + y + (x::int)"
