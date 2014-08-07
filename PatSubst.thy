@@ -227,17 +227,16 @@ struct
               NONE => NONE
             | SOME (tyenv', _) => SOME (off (tyenv', u, pos))
 
+          fun match_argT T u =
+            let val (U, _) = dest_funT (fastype_of u)
+            in try (Sign.typ_match thy (T,U)) end
+            handle TYPE _ => K NONE
+
           fun desc [] ft = do_match ft
             | desc (T :: Ts) (ft as (tyenv , u, pos)) =
               case do_match ft of
                 NONE =>
-                  (case
-                    let
-                      val (U, _) = dest_funT (fastype_of u)
-                      val tyenv' = Sign.typ_match thy (T,U) tyenv
-                    in SOME tyenv' end
-                    handle TYPE _ => NONE | Type.TYPE_MATCH => NONE
-                  of
+                  (case match_argT T u tyenv of
                     NONE => NONE
                   | SOME tyenv' => desc Ts (ft_abs ctxt (NONE, T) (tyenv', u, pos)))
               | SOME ft => SOME ft
