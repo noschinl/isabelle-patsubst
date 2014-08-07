@@ -153,7 +153,34 @@ lemma
   shows   "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
 by (pat_subst at "x + 1" in goal for(x) at asm add.commute)
    (rule assms)
-   
+
+(* eta-equivalence *)
+lemma
+  assumes a: "P id"
+  assumes rewr: "\<And>x. g x = id x"
+  shows "P (g :: nat \<Rightarrow> nat)"
+  by (pat_subst at "\<lambda>(x :: nat). \<box>" rewr) (rule a)
+
+lemma
+  assumes a: "P id"
+  assumes rewr: "\<And>x. f x = id x"
+  shows "P (f :: nat \<Rightarrow> nat)"
+  by (pat_subst at "\<lambda>(x :: nat). \<box>" rewr) (rule a)
+
+lemma
+  assumes a: "P id"
+  assumes rewr: "\<And>x. f x = id x"
+  shows "P (f :: nat \<Rightarrow> nat)"
+  by (pat_subst at "f x" at "\<lambda>x. \<box>" rewr) (rule a)
+
+lemma
+  assumes a: "P id"
+  assumes rewr: "\<And>x. f x = id x"
+  assumes x: "f = id"
+  shows "P (f :: nat \<Rightarrow> nat)"
+  by (pat_subst at "f _"  x) (rule a)
+
+
 (* A more complex example of instantiation involving the while combinator. *)
 (* TODO: This does not work if the type of the invariant is too general. *)
 definition "while_inv (I :: 'a \<Rightarrow> bool) (c :: 'a \<Rightarrow> bool) b s \<equiv> while c b s"
