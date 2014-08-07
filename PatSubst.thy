@@ -42,7 +42,7 @@ structure Pat_Subst : PAT_SUBST =
 struct
   (* Data type to represent a single pattern step.
      Patterns entered by the user will be of type "pattern list".  *)
-  datatype 'a pattern = At | In | Term of 'a | Concl | Asm | Prop | For of string list;
+  datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | For of 'b list;
 
   (* Some types/terminology used in the code below: *)
 
@@ -66,6 +66,9 @@ struct
     of the subterm t itself and its subterm position p. *)
   type focusterm = Type.tyenv * term * subterm_position
 
+  val dummyN = Name.internal "__dummy"
+  val holeN = Name.internal "_hole"
+
   (* changes object "=" to meta "==" which prepares a given rewrite rule. *)
   fun prep_meta_eq ctxt =
     Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
@@ -85,78 +88,84 @@ struct
     let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_conv; 
     in inner #> outer end;
 
-  fun ft_abs (s,T) (ft as (tyenv, _, _)) = (* XXX *)
+  fun ft_abs ctxt (s,T) (tyenv, u, pos) =
+    case try (fastype_of #> dest_funT) u of
+      NONE => raise TERM ("ft_abs: no function type", [u])
+    | SOME (U, _) =>
     let
-      val u = Free (the_default "__dummy__" s (*XXX*), Type.devar tyenv T)
+      val tyenv' = if T = dummyT then tyenv else Sign.typ_match (Proof_Context.theory_of ctxt) (T, U) tyenv
+      val x = Free (the_default (Name.internal dummyN) s (*XXX*), Type.devar tyenv' T)
       val desc = below_abs s
       val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
       fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
-      fun f (tyenv, Abs (_,_,t'),pos) = (tyenv, subst_bound (u, t'), desc pos)
-        | f (tyenv, t,pos) = (tyenv, t $ u, desc (pos o eta_expand))
-    in
-      f ft
-    end
-    (* should there be error checking like in dest_abs, checking for type error? *)
+      val (u', pos') =
+        case u of
+          Abs (_,_,t') => (subst_bound (x, t'), desc pos)
+        | _ => (u $ x, desc (pos o eta_expand))
+    in (tyenv', u', pos') end
+    handle Pattern.MATCH => raise TYPE ("ft_abs: types don't match", [T,U], [u])
 
-  fun ft_fun (tyenv, l $ _, pos) = (tyenv, l, below_left pos)
-    | ft_fun (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_fun o ft_abs (NONE, T)) ft
-    | ft_fun (_, t, _) = raise TERM ("ft_fun", [t])
+  fun ft_fun _ (tyenv, l $ _, pos) = (tyenv, l, below_left pos)
+    | ft_fun ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_fun ctxt o ft_abs ctxt (NONE, T)) ft
+    | ft_fun _ (_, t, _) = raise TERM ("ft_fun", [t])
 
-  fun ft_arg (tyenv, _ $ r, pos) = (tyenv, r, below_right pos)
-    | ft_arg (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_arg o ft_abs (NONE, T)) ft
-    | ft_arg (_, t, _) = raise TERM ("ft_arg", [t])
+  fun ft_arg _ (tyenv, _ $ r, pos) = (tyenv, r, below_right pos)
+    | ft_arg ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_arg ctxt o ft_abs ctxt (NONE, T)) ft
+    | ft_arg _ (_, t, _) = raise TERM ("ft_arg", [t])
 
   (* Move to B in !!x_1 ... x_n. B. Do not eta-expand *)
-  fun ft_params (ft as (_, t, _) : focusterm) =
+  fun ft_params ctxt (ft as (_, t, _) : focusterm) =
     case t of
       Const (@{const_name "Pure.all"}, _) $ Abs (_,T,_) =>
-        (ft_params o ft_abs (NONE, T) o ft_arg) ft
+        (ft_params ctxt o ft_abs ctxt (NONE, T) o ft_arg ctxt) ft
     | Const (@{const_name "Pure.all"}, _) =>
-        (ft_params o ft_arg) ft
+        (ft_params ctxt o ft_arg ctxt) ft
     | _ => ft
 
-  fun ft_all ident (ft as (_, Const (@{const_name "Pure.all"}, T) $ _, _) : focusterm) =
-      let val (U, _) = T |> dest_funT |> fst |> dest_funT
-       in (ft_abs (ident, U) o ft_arg) ft end
-    | ft_all _ (_, t, _) = raise TERM ("ft_all", [t])
+  fun ft_all ctxt ident (ft as (_, Const (@{const_name "Pure.all"}, T) $ _, _) : focusterm) =
+      let
+        val def_U = T |> dest_funT |> fst |> dest_funT |> fst
+        val ident' = apsnd (the_default (def_U)) ident
+      in (ft_abs ctxt ident' o ft_arg ctxt) ft end
+    | ft_all _ _ (_, t, _) = raise TERM ("ft_all", [t])
 
-  fun ft_for idents (ft as (_, t, _) : focusterm) =
+  fun ft_for ctxt idents (ft as (_, t, _) : focusterm) =
     let
       fun f rev_idents (Const (@{const_name "Pure.all"}, _) $ t) =
           let
            val (rev_idents', desc) = f rev_idents (case t of Abs (_,_,u) => u | _ => t)
           in
             case rev_idents' of
-              [] => ([], desc o ft_all NONE)
-            | (x :: xs) => (xs , desc o ft_all x)
+              [] => ([], desc o ft_all ctxt (NONE, NONE))
+            | (x :: xs) => (xs , desc o ft_all ctxt x)
           end
         | f rev_idents _ = (rev_idents, I)
       val desc = snd (f (rev idents) t)
     in desc ft end
 
-  fun ft_concl (ft as (_, t, _) : focusterm) =
+  fun ft_concl ctxt (ft as (_, t, _) : focusterm) =
     case t of
-      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl o ft_arg) ft
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl ctxt o ft_arg ctxt) ft
     | _ => ft
 
-  fun ft_assm (ft as (_, t, _) : focusterm) =
+  fun ft_assm ctxt (ft as (_, t, _) : focusterm) =
     case t of
-      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl o ft_arg o ft_fun) ft
+      (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => (ft_concl ctxt o ft_arg ctxt o ft_fun ctxt) ft
     | _ => raise TERM ("ft_assm", [t])
 
-  fun ft_judgment thy (ft as (_, t, _) : focusterm) =
-    if Object_Logic.is_judgment thy t
-    then ft_arg ft
+  fun ft_judgment ctxt (ft as (_, t, _) : focusterm) =
+    if Object_Logic.is_judgment (Proof_Context.theory_of ctxt) t
+    then ft_arg ctxt ft
     else ft;
 
   (* Return a lazy sequenze of all subterms of the focusterm for which
      the condition holds. *)
-  fun find_subterms condition (ft as (_, t, _) : focusterm) =
+  fun find_subterms ctxt condition (ft as (_, t, _) : focusterm) =
     let
-      val recurse = find_subterms condition;    
+      val recurse = find_subterms ctxt condition;
       val recursive_matches = case t of
-          _ $ _ => Seq.append (ft |> ft_fun |> recurse) (ft |> ft_arg |> recurse)
-        | Abs (_,T,_) => ft |> ft_abs (NONE, T) |> recurse
+          _ $ _ => Seq.append (ft |> ft_fun ctxt |> recurse) (ft |> ft_arg ctxt |> recurse)
+        | Abs (_,T,_) => ft |> ft_abs ctxt (NONE, T) |> recurse
         | _ => Seq.empty;
     in
       (* If the condition is met, then the current focusterm is part of the
@@ -168,7 +177,7 @@ struct
     end;
 
   (* Find all subterms that might be a valid point to apply a rule. *)
-  val valid_match_points =
+  fun valid_match_points ctxt =
     let
       fun is_valid (l $ _) = is_valid l
         | is_valid (Abs (_, _, a)) = is_valid a
@@ -176,19 +185,17 @@ struct
         | is_valid (Bound _) = false
         | is_valid _ = true;
     in
-      find_subterms (#2 #> is_valid )
+      find_subterms ctxt (#2 #> is_valid )
     end;
 
-  val hole_name = "_HOLE_"
-
-  fun is_hole (Var ((name, _), _)) = (name = hole_name)
+  fun is_hole (Var ((name, _), _)) = (name = holeN)
     | is_hole _ = false;
 
   val hole_syntax =
     let
       (* Modified variant of Term.replace_hole *)
       fun replace_hole Ts (Const (@{const_name patsubst_HOLE}, T)) i =
-            (list_comb (Var ((hole_name, i), Ts ---> T), map_range Bound (length Ts)), i + 1)
+            (list_comb (Var ((holeN, i), Ts ---> T), map_range Bound (length Ts)), i + 1)
         | replace_hole Ts (Abs (x, T, t)) i =
             let val (t', i') = replace_hole (T :: Ts) t i
             in (Abs (x, T, t'), i') end
@@ -205,28 +212,28 @@ struct
     end
 
   (* Find a subterm of the focusterm matching the pattern. *)
-  fun find_matches thy pattern_list =
+  fun find_matches ctxt pattern_list =
     let
+      fun set_tyenv ft tyenv = (tyenv, #2 ft, #3 ft)
+
       fun move_term thy (t, off) (ft as (tyenv, u, _) : focusterm) =
-        let
-          val (tyenv', _) = Pattern.match thy (t,u) (tyenv, Vartab.empty)
-          val ft' = (tyenv', #2 ft, #3 ft)
-        in SOME (off ft') end (* XXX *)
-        handle Pattern.MATCH => NONE
+        case try (Pattern.match thy (t,u)) (tyenv, Vartab.empty) of
+          NONE => NONE
+        | SOME (tyenv', _) => SOME (off (set_tyenv ft tyenv'))
 
       fun seq_unfold f ft =
         case f ft of
           NONE => Seq.empty
         | SOME ft' => Seq.cons ft' (seq_unfold f ft')
 
-      val _ = seq_unfold (try ft_assm)
+      val thy = Proof_Context.theory_of ctxt
 
-      fun apply_pat At = Seq.map (ft_judgment thy)
-        | apply_pat In = Seq.maps (valid_match_points)
-        | apply_pat Asm = Seq.maps (seq_unfold (try ft_assm) o ft_params)
-        | apply_pat Concl = Seq.map (ft_concl o ft_params)
+      fun apply_pat At = Seq.map (ft_judgment ctxt)
+        | apply_pat In = Seq.maps (valid_match_points ctxt)
+        | apply_pat Asm = Seq.maps (seq_unfold (try (ft_assm ctxt)) o ft_params ctxt)
+        | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
         | apply_pat Prop = I
-        | apply_pat (For idents) = Seq.map_filter (try (ft_for (map SOME idents))) (*XXX*)
+        | apply_pat (For idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
         | apply_pat (Term x) = Seq.map_filter ( (move_term thy x))
 
       fun apply_pats ft = ft
@@ -293,8 +300,7 @@ struct
   (* Rewrite in subgoal i. *)
   fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
     let
-      val thy = Proof_Context.theory_of ctxt
-      val matches = find_matches thy pattern (Vartab.empty, t, I);
+      val matches = find_matches ctxt pattern (Vartab.empty, t, I);
       fun rewrite_conv rule insty ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
       fun tac (tyenv, _, position) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
     in
@@ -315,13 +321,13 @@ struct
 
       fun mk_fix s = (Binding.name s, NONE, NoSyn)
 
-      val raw_pattern : string pattern list parser =
+      val raw_pattern : (string, binding * string option * mixfix) pattern list parser =
         let
           val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In) (* XXX rename *)
           val atom =  (Args.$$$ "asm" >> K Asm) ||
             (Args.$$$ "concl" >> K Concl) || (Args.$$$ "goal" >> K Prop) || (Parse.term >> Term)
           val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
-          val for = Args.$$$ "for" |-- Args.parens (Scan.repeat Args.name) >> (single o For) (* XXX Parse.simple_fixes instead of Args.name *)
+          val for = Args.$$$ "for" |-- Args.parens (Scan.optional Parse.fixes []) >> (single o For) (* XXX Parse.simple_fixes instead of Args.name *)
 
           fun append_default [] = [Concl, In]
             | append_default (ps as Term _ :: _) = Concl :: In :: ps
@@ -336,7 +342,7 @@ struct
         in (r', (ctxt', toks' : Token.T list))end
       val _ = ctxt_lift : 'a parser -> (Proof.context -> 'a  -> ('b * Proof.context)) -> 'b context_parser (*XXX*)
 
-      fun prep_pats ctxt (ps : string pattern list) =
+      fun prep_pats ctxt (ps : (string, binding * string option * mixfix) pattern list) =
         let
           fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
             | is_hole_const _ = false
@@ -370,8 +376,10 @@ struct
                   the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
               in (Term (t', bs), (n', ctxt')) end
             | prep (For ss) (n, ctxt) =
-              let val (ss', ctxt') = Proof_Context.add_fixes (map mk_fix ss) ctxt
-              in (For ss', (n, ctxt')) end
+              let
+                fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx)
+                val (ns, ctxt') = Proof_Context.add_fixes (map read_typ ss) ctxt
+              in (For ns, (n, ctxt')) end
             | prep At (n,ctxt) = (At, (n, ctxt))
             | prep In (n,ctxt) = (In, (n, ctxt))
             | prep Concl (n,ctxt) = (Concl, (n, ctxt))
@@ -392,13 +400,13 @@ struct
       fun prep_args ctxt ((raw_pats, raw_ths), raw_insts) =
         let
 
-          val f = (*TODO rename*)
+          fun f ctxt = (*TODO rename*)
             let
 
               fun descend_hole fixes (Abs (_, _, t)) =
                   (case descend_hole fixes t of
                     NONE => NONE
-                  | SOME (fix :: fixes', pos) => SOME (fixes', pos o ft_abs (apfst SOME fix))
+                  | SOME (fix :: fixes', pos) => SOME (fixes', pos o ft_abs ctxt (apfst SOME fix))
                   | SOME ([], _) => raise Match (* XXX -- check phases modified binding *))
                 | descend_hole fixes (t as l $ r) =
                   let val (f, _) = strip_comb t
@@ -407,10 +415,10 @@ struct
                     then SOME (fixes, I)
                     else
                       (case descend_hole fixes l of
-                        SOME (fixes', pos) => SOME (fixes', pos o ft_fun)
+                        SOME (fixes', pos) => SOME (fixes', pos o ft_fun ctxt)
                       | NONE =>
                         (case descend_hole fixes r of
-                          SOME (fixes', pos) => SOME (fixes', pos o ft_arg)
+                          SOME (fixes', pos) => SOME (fixes', pos o ft_arg ctxt)
                         | NONE => NONE))
                   end
                 | descend_hole fixes t =
@@ -434,35 +442,37 @@ struct
                 | safe_chop n (x :: xs) = chop (n - 1) xs |>> cons x
                 | safe_chop _ _ = raise Match; (* XXX *)
 
-              fun reinsert_pat (Term (_, cs)) (t :: ts) =
+              fun reinsert_pat _ (Term (_, cs)) (t :: ts) =
                   let val (cs', ts') = safe_chop (length cs) ts
                   in (Term (t, map dest_Free cs'), ts') end (* XXX get rid of cs *)
-                | reinsert_pat (Term _) [] = raise Match
-                | reinsert_pat (For ss) ts = ((For ss), ts)
-                | reinsert_pat At ts = (At, ts)
-                | reinsert_pat In ts = (In, ts)
-                | reinsert_pat Concl ts = (Concl, ts)
-                | reinsert_pat Asm ts = (Asm, ts)
-                | reinsert_pat Prop ts = (Prop, ts)
+                | reinsert_pat _ (Term _) [] = raise Match
+                | reinsert_pat ctxt (For ss) ts =
+                  let val fixes = map (fn s => (s, Variable.default_type ctxt s)) ss
+                  in (For fixes, ts) end
+                | reinsert_pat _ At ts = (At, ts)
+                | reinsert_pat _ In ts = (In, ts)
+                | reinsert_pat _ Concl ts = (Concl, ts)
+                | reinsert_pat _ Asm ts = (Asm, ts)
+                | reinsert_pat _ Prop ts = (Prop, ts)
 
               fun free_constr (s,T) = Type.constraint T (Free (s, dummyT))
 
               val ts = maps (fn (Term (t, cs)) => t :: map free_constr cs | _ => []) ps @ insts_ts
               val ts' = Syntax.check_terms (hole_syntax ctxt) ts
-              val (ps', ts'') = fold_map reinsert_pat ps ts'
+              val ctxt' = fold Variable.declare_term ts' ctxt
+              val (ps', ts'') = fold_map (reinsert_pat ctxt') ps ts'
               val insts = insts_vars ~~ ts'' (* XXX length check? *)
-            in (ps', insts) end
+            in ((ps', insts), ctxt') end
 
           val ths = Attrib.eval_thms ctxt raw_ths
           val (pats, ctxt') = prep_pats ctxt raw_pats
           val insts = prep_insts ctxt' raw_insts
-          val (pats', insts') = check_terms ctxt' pats insts
-          val pats'' = f pats'
-        in (((pats'', ths), insts'), ctxt') end
+          val ((pats', insts'), ctxt'') = check_terms ctxt' pats insts
+          val pats'' = f ctxt'' pats'
+        in (((pats'', ths), insts'), ctxt'') end
 
-      val instantiation_parser = Scan.option
-        ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax))
-        >> the_default []
+      val instantiation_parser = Scan.optional
+        ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)) []
 
       val subst_parser =
         let val scan = raw_pattern -- Parse_Spec.xthms1 -- instantiation_parser
