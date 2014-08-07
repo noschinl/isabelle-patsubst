@@ -178,7 +178,7 @@ lemma
   assumes rewr: "\<And>x. f x = id x"
   assumes x: "f = id"
   shows "P (f :: nat \<Rightarrow> nat)"
-  by (pat_subst at "f _"  x) (rule a)
+  by (pat_subst at "f _"  rewr) (rule a)
 
 
 (* A more complex example of instantiation involving the while combinator. *)

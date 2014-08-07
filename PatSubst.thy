@@ -214,19 +214,39 @@ struct
   (* Find a subterm of the focusterm matching the pattern. *)
   fun find_matches ctxt pattern_list =
     let
-      fun set_tyenv ft tyenv = (tyenv, #2 ft, #3 ft)
+      fun move_term ctxt (t, off) (ft : focusterm) =
+        let
+          val thy = Proof_Context.theory_of ctxt
 
-      fun move_term thy (t, off) (ft as (tyenv, u, _) : focusterm) =
-        case try (Pattern.match thy (t,u)) (tyenv, Vartab.empty) of
-          NONE => NONE
-        | SOME (tyenv', _) => SOME (off (set_tyenv ft tyenv'))
+          val eta_expands =
+            let val (_, ts) = strip_comb t
+            in map fastype_of (snd (take_suffix is_Var ts)) end
+
+          fun do_match (tyenv, u, pos) =
+            case try (Pattern.match thy (t,u)) (tyenv, Vartab.empty) of
+              NONE => NONE
+            | SOME (tyenv', _) => SOME (off (tyenv', u, pos))
+
+          fun desc [] ft = do_match ft
+            | desc (T :: Ts) (ft as (tyenv , u, pos)) =
+              case do_match ft of
+                NONE =>
+                  (case
+                    let
+                      val (U, _) = dest_funT (fastype_of u)
+                      val tyenv' = Sign.typ_match thy (T,U) tyenv
+                    in SOME tyenv' end
+                    handle TYPE _ => NONE | Type.TYPE_MATCH => NONE
+                  of
+                    NONE => NONE
+                  | SOME tyenv' => desc Ts (ft_abs ctxt (NONE, T) (tyenv', u, pos)))
+              | SOME ft => SOME ft
+        in desc eta_expands ft end
 
       fun seq_unfold f ft =
         case f ft of
           NONE => Seq.empty
         | SOME ft' => Seq.cons ft' (seq_unfold f ft')
-
-      val thy = Proof_Context.theory_of ctxt
 
       fun apply_pat At = Seq.map (ft_judgment ctxt)
         | apply_pat In = Seq.maps (valid_match_points ctxt)
@@ -234,7 +254,7 @@ struct
         | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
         | apply_pat Prop = I
         | apply_pat (For idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
-        | apply_pat (Term x) = Seq.map_filter ( (move_term thy x))
+        | apply_pat (Term x) = Seq.map_filter ( (move_term ctxt x))
 
       fun apply_pats ft = ft
         |> Seq.single
