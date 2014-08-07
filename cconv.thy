@@ -63,9 +63,8 @@ struct
   (* Rewrite conversion intended to work with conditional rules. *)
   fun rewr_conv rule ct =
     let
-      val cterm_of = Thm.cterm_of (Thm.theory_of_thm rule);
-      val lhs_of = Thm.concl_of #> cterm_of #> Thm.dest_equals_lhs;
-      val rhs_of = Thm.concl_of #> cterm_of #> Thm.dest_equals_rhs;
+      val lhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_lhs
+      val rhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_rhs
       val rule1 = Thm.incr_indexes (#maxidx (Thm.rep_cterm ct) + 1) rule;
       val lhs = lhs_of rule1;
       val rule2 = Thm.rename_boundvars (Thm.term_of lhs) (Thm.term_of ct) rule1;

@@ -301,7 +301,7 @@ struct
   fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
     let
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
-      fun rewrite_conv rule insty ctxt bounds  = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
+      fun rewrite_conv rule insty ctxt bounds = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
       fun tac (tyenv, _, position) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
     in
       SEQ_CONCAT (Seq.map tac matches)
