@@ -42,7 +42,7 @@ structure Pat_Subst : PAT_SUBST =
 struct
   (* Data type to represent a single pattern step.
      Patterns entered by the user will be of type "pattern list".  *)
-  datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | For of 'b list;
+  datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | All of 'b list;
 
   (* Some types/terminology used in the code below: *)
 
@@ -252,7 +252,7 @@ struct
         | apply_pat Asm = Seq.maps (seq_unfold (try (ft_assm ctxt)) o ft_params ctxt)
         | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
         | apply_pat Prop = I
-        | apply_pat (For idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
+        | apply_pat (All idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
         | apply_pat (Term x) = Seq.map_filter ( (move_term ctxt x))
 
       fun apply_pats ft = ft
@@ -346,7 +346,7 @@ struct
           val atom =  (Args.$$$ "asm" >> K Asm) ||
             (Args.$$$ "concl" >> K Concl) || (Args.$$$ "goal" >> K Prop) || (Parse.term >> Term)
           val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
-          val for = Args.$$$ "for" |-- Args.parens (Scan.optional Parse.fixes []) >> (single o For) (* XXX Parse.simple_fixes instead of Args.name *)
+          val for = Args.$$$ "all" |-- Args.parens (Scan.optional Parse.fixes []) >> (single o All) (* XXX Parse.simple_fixes instead of Args.name *)
 
           fun append_default [] = [Concl, In]
             | append_default (ps as Term _ :: _) = Concl :: In :: ps
@@ -394,11 +394,11 @@ struct
                 val ((ctxt', n', bs), t') =
                   the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
               in (Term (t', bs), (n', ctxt')) end
-            | prep (For ss) (n, ctxt) =
+            | prep (All ss) (n, ctxt) =
               let
                 fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx)
                 val (ns, ctxt') = Proof_Context.add_fixes (map read_typ ss) ctxt
-              in (For ns, (n, ctxt')) end
+              in (All ns, (n, ctxt')) end
             | prep At (n,ctxt) = (At, (n, ctxt))
             | prep In (n,ctxt) = (In, (n, ctxt))
             | prep Concl (n,ctxt) = (Concl, (n, ctxt))
@@ -446,7 +446,7 @@ struct
               fun prep (Term (t, fixes)) =
                   let val f = descend_hole (rev fixes) #> the_default ([], I) #> snd
                   in Term (t, f t) end
-                | prep (For ss) = (For ss)
+                | prep (All ss) = (All ss)
                 | prep At = At
                 | prep In = In
                 | prep Concl = Concl
@@ -465,9 +465,9 @@ struct
                   let val (cs', ts') = safe_chop (length cs) ts
                   in (Term (t, map dest_Free cs'), ts') end (* XXX get rid of cs *)
                 | reinsert_pat _ (Term _) [] = raise Match
-                | reinsert_pat ctxt (For ss) ts =
+                | reinsert_pat ctxt (All ss) ts =
                   let val fixes = map (fn s => (s, Variable.default_type ctxt s)) ss
-                  in (For fixes, ts) end
+                  in (All fixes, ts) end
                 | reinsert_pat _ At ts = (At, ts)
                 | reinsert_pat _ In ts = (In, ts)
                 | reinsert_pat _ Concl ts = (Concl, ts)

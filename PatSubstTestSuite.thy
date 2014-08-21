@@ -129,41 +129,41 @@ by (pat_subst in "\<lambda>any_identifier_works. \<box>" f_inv_def[symmetric] wh
 lemma
   assumes "P (2 + 1)"
   shows "\<And>x y. P (1 + 2 :: nat)"
-by (pat_subst in "P (1 + 2)" at "_" for (x) add.commute)
+by (pat_subst in "P (1 + 2)" at "_" all (x) add.commute)
    (rule assms)
 
 lemma
   assumes "\<And>x y. P (y + x)"
   shows "\<And>x y. P (x + y :: nat)"
-by (pat_subst in "P (x + _)" at "_" for (x y) add.commute)
+by (pat_subst in "P (x + _)" at "_" all (x y) add.commute)
    (rule assms)
 
-(* The for-keyword. *)
+(* The all-keyword. *)
 lemma
   assumes "\<And>x y z. y + x + z = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "x + y" in "x + y + z" in concl for (x y z) add.commute)
+by (pat_subst at "x + y" in "x + y + z" in concl all (x y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. z + (x + y) = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "(_ + y) + z" in concl for (y z) add.commute)
+by (pat_subst at "(_ + y) + z" in concl all (y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. x + y + z = y + z + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (pat_subst at "\<box> + _" at "_ = \<box>" in concl for () add.commute)
+by (pat_subst at "\<box> + _" at "_ = \<box>" in concl all () add.commute)
    (rule assms)
 
-(* The for-keyword can be used anywhere in the pattern where there is an \<And>-Quantifier.
+(* The all-keyword can be used anywhere in the pattern where there is an \<And>-Quantifier.
    TODO: This is still a little awkward. *)
 lemma
   assumes "(\<And>(x::int). x < 1 + x)"
   and     "(x::int) + 1 > x"
   shows   "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-by (pat_subst at "x + 1" in goal for(x) at asm add.commute)
+by (pat_subst at "x + 1" in goal all (x) at asm add.commute)
    (rule assms)
 
 (* eta-equivalence *)
@@ -188,9 +188,14 @@ lemma
 lemma
   assumes a: "P id"
   assumes rewr: "\<And>x. f x = id x"
-  assumes x: "f = id"
   shows "P (f :: nat \<Rightarrow> nat)"
   by (pat_subst at "f _"  rewr) (rule a)
+
+lemma
+  assumes a: "P id"
+  assumes rewr: "\<And>x y. g x y = id y"
+  shows "P ((g :: int \<Rightarrow> nat \<Rightarrow> nat) 3)"
+  by (pat_subst at "g _ _"  rewr) (rule a)
 
 
 (* A more complex example of instantiation involving the while combinator. *)

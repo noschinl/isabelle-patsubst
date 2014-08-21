@@ -81,8 +81,6 @@ oops
 
    Since all rewriting is now done via conversions,
    instantiation becomes fairly easy to do.
-   
-   Note that the instantiation feature is not yet considered stable.
 *)
 
 (* We first introduce a function f and an extended
@@ -107,18 +105,18 @@ apply(pat_subst in "\<lambda>abc. \<box>" f_inv_def[symmetric] where I = "\<lamb
 apply(pat_subst f_inv_def)
 oops
 
-(* The "for" keyword. *)
+(* The "all" keyword. *)
 lemma "\<And>x y z. x + y + z = z + y + (x::int)"
-apply(pat_subst at "x + y" in "x + y + z" in concl for (x y z) add.commute)
-apply(pat_subst at "(y + _) + z" in concl for (y z) add.commute)
-apply(pat_subst at "_" in concl for () add.commute)
+apply(pat_subst at "x + y" in "x + y + z" in concl all (x y z) add.commute)
+apply(pat_subst at "(y + _) + z" in concl all (y z) add.commute)
+apply(pat_subst at "_" in concl all () add.commute)
 apply(simp)
 done
 
 (* It can be used anywhere in the pattern where there is an \<And>-Quantifier.
    TODO: This is still a little awkward. *)
 lemma "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-apply(pat_subst at "x + 1" in goal for (x) at asm add.commute)
+apply(pat_subst at "x + 1" in goal all (x) at asm add.commute)
 apply(simp)
 done
 
