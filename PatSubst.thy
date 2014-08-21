@@ -528,11 +528,6 @@ struct
 end;
 *}
 
-thm exI[where x=1]
-
 setup Pat_Subst.setup
-
-ML \<open> Proof_Context.add_fixes;Proof_Context.read_vars \<close>
-thm exI[where x="P x" for P]
 
 end
