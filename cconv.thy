@@ -8,8 +8,11 @@ begin
 ML {*
 signature CCONV =
 sig
+  val else_conv: conv * conv -> conv
+
   val no_conv : conv
   val all_conv : conv
+  val first_conv: conv list -> conv
   val abs_conv: (cterm * Proof.context -> conv) -> Proof.context -> conv
   val combination_conv: conv -> conv -> conv
   val comb_conv: conv -> conv
@@ -18,6 +21,7 @@ sig
   val arg1_conv: conv -> conv
   val fun2_conv: conv -> conv
   val rewr_conv : thm -> conv
+  val rewrs_conv : thm list -> conv
   val params_conv: int -> (Proof.context -> conv) -> Proof.context -> conv
   val prems_conv: int -> conv -> conv
   val concl_conv: int -> conv -> conv
@@ -59,6 +63,15 @@ struct
   
   val no_conv = Conv.no_conv;
   val all_conv = Conv.all_conv;
+
+  fun (cv1 else_conv cv2) ct =
+    (cv1 ct
+      handle THM _ => cv2 ct
+        | CTERM _ => cv2 ct
+        | TERM _ => cv2 ct
+        | TYPE _ => cv2 ct);
+  
+  fun first_conv cvs = fold_rev (curry op else_conv) cvs no_conv;
   
   (* Rewrite conversion intended to work with conditional rules. *)
   fun rewr_conv rule ct =
@@ -77,6 +90,8 @@ struct
     in
       transitive rule4 (Thm.beta_conversion true (rhs_of rule4))
     end;
+
+  fun rewrs_conv rules = first_conv (map rewr_conv rules);
     
   fun combination_conv cv1 cv2 cterm =
     let val (l, r) = Thm.dest_comb cterm;

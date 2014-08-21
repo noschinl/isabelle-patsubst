@@ -3,7 +3,6 @@ imports Main cconv
 begin
 
 ML {*
-fun CONCAT' tacs = fold_rev (curry op APPEND') tacs (K no_tac);
 fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 *}
 
@@ -360,16 +359,17 @@ struct
 
       val (thm'', env') = inst_thm_insts ctxt (raw_insts', env) thm'
       val thm''' = inst_thm_to ctxt (Option.map replace_idents to, env') thm''
-    in thm''' end (*XXX rename thm'''*)
+    in SOME thm''' end
+    handle NO_TO_MATCH => NONE (*XXX rename thm'''*)
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rule = SUBGOAL (fn (t,i) =>
+  fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
     let
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
-      fun rewrite_conv rule insty ctxt bounds = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
+      fun rewrite_conv insty ctxt bounds=
+        CConv.rewrs_conv (map_filter (inst_thm ctxt bounds insty) rules);
       val export = singleton (Proof_Context.export ctxt orig_ctxt)
-      fun tac (tyenv, _, position) th = CCONVERSION (export o position (rewrite_conv rule (inst, to, tyenv)) ctxt []) i th
-        handle NO_TO_MATCH => Seq.empty
+      fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
     in
       SEQ_CONCAT (Seq.map tac matches)
     end);
@@ -377,8 +377,8 @@ struct
   fun patsubst_tac ctxt pattern thms =
     let
       val thms' = maps (prep_meta_eq ctxt) thms
-      val tac = rewrite_goal_with_thm ctxt pattern
-    in CONCAT' (map tac thms') THEN' (K distinct_subgoals_tac)end
+      val tac = rewrite_goal_with_thm ctxt pattern thms'
+    in tac THEN' (K distinct_subgoals_tac)end
    (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
 
   (* Method setup for pat_subst.
