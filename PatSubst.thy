@@ -339,7 +339,7 @@ struct
     | inst_thm_to thy (SOME to, env) thm =
         instantiate_normalize_env thy (unify_with_rhs thy to env thm) thm
 
-  fun inst_thm ctxt idents (raw_insts, to, tyenv) thm =
+  fun inst_thm ctxt idents (insts, to, tyenv) thm =
     let
       (* Replace any identifiers with their corresponding bound variables. *)
       val maxidx = Term.maxidx_typs (map (snd o snd) (Vartab.dest tyenv)) 0
@@ -348,23 +348,20 @@ struct
         let
           fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
             | subst _ t = t;
-        in
-          Term.map_aterms (subst idents)
-        end;
-
-      val maxidx = Envir.maxidx_of env
-          |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t] @ map snd raw_insts)
-      val thm' = Thm.incr_indexes (maxidx + 1) thm
-      val raw_insts' = raw_insts
-        |> map (apsnd replace_idents)
-        |> map (fn ((s,n), t) => ((s, n + maxidx + 1), t))
+        in Term.map_aterms (subst idents) end;
 
       val thy = Proof_Context.theory_of ctxt
 
-      val (thm'', env') = inst_thm_insts ctxt (raw_insts', env) thm'
-      val thm''' = inst_thm_to thy (Option.map replace_idents to, env') thm''
-    in SOME thm''' end
-    handle NO_TO_MATCH => NONE (*XXX rename thm'''*)
+      val maxidx = Envir.maxidx_of env
+          |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t] @ map snd insts)
+      val insts' = insts
+        |> map (fn ((s,n), t) => ((s, n + maxidx + 1), t))
+        |> map (apsnd replace_idents)
+      val (thm', env') = thm
+        |> Thm.incr_indexes (maxidx + 1)
+        |> inst_thm_insts ctxt (insts', env)
+    in SOME (inst_thm_to thy (Option.map replace_idents to, env') thm') end
+    handle NO_TO_MATCH => NONE
 
   (* Rewrite in subgoal i. *)
   fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
