@@ -301,7 +301,22 @@ struct
         val raw_insts' = map (fn ((s,n), t) => ((s, n + maxidx + 1), t)) raw_insts
 
         val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts'
-        val tyenv' = fst (fold (Sign.typ_unify thy) (tyassoc) (tyenv, maxidx))
+        fun typ_unify (T,U) (tyenv,idx) = Sign.typ_unify thy (T,U) (tyenv,idx)
+          handle Type.TUNIFY =>
+          let
+            fun prt_vt (x, (sort, T)) =
+              map (Syntax.pretty_typ ctxt) [TVar (x, sort), T]
+              |> Pretty.separate " \<rightarrow>"
+              |> Pretty.block
+            val prt =
+              [ Pretty.str "Failed to instantiate. Cannot unify types",
+                Pretty.big_list "" (map (Syntax.pretty_typ ctxt) [T,U]),
+                Pretty.brk 1,
+                Pretty.str "with respect to type environment",
+                Pretty.big_list "" (map prt_vt (Vartab.dest tyenv)) ]
+              |> Pretty.chunks
+          in Pretty.string_of_margin 50 prt |> error end
+        val tyenv' = fst (fold typ_unify (@{print} tyassoc) (@{print} tyenv, maxidx))
 
         val insts = raw_insts'
           |> map (prep_inst tyenv')
