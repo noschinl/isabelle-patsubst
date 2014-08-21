@@ -192,6 +192,13 @@ struct
   fun is_hole (Var ((name, _), _)) = (name = holeN)
     | is_hole _ = false;
 
+  fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
+    | is_hole_const _ = false
+
+  fun no_holes tm =
+    if not (fold_aterms (fn t => fn b => b orelse is_hole_const t) tm false) then tm
+    else raise TERM ("Illegal occurrence of hole", [tm]);
+
   val hole_syntax =
     let
       (* Modified variant of Term.replace_hole *)
@@ -418,8 +425,6 @@ struct
 
       fun prep_pats ctxt (ps : (string, binding * string option * mixfix) pattern list) =
         let
-          fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
-            | is_hole_const _ = false
 
           fun add_constrs ctxt n (Abs (x, T, t)) =
               let
@@ -466,9 +471,9 @@ struct
 
       fun prep_insts ctxt (raw_insts : (indexname * string) list) =
         let
-          (* add support for "for" *)
           val (ri_vars, ri_vals) = split_list raw_insts
-          val ri_ts = map (Syntax.parse_term ctxt) ri_vals
+          val validate = Sign.no_vars ctxt o Term.no_dummy_patterns o no_holes
+          val ri_ts = map (validate o Syntax.parse_term ctxt) ri_vals
         in (ri_vars, ri_ts) end
 
       fun prep_args ctxt (((raw_pats, raw_to), raw_ths), (raw_insts, raw_fors)) =
