@@ -445,7 +445,7 @@ struct
 
           fun prep (Term s) (n, ctxt) =
               let
-                val t = Syntax.parse_term (hole_syntax ctxt) s
+                val t = Syntax.parse_term ctxt s
                 val ((ctxt', n', bs), t') =
                   the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
               in (Term (t', bs), (n', ctxt')) end
