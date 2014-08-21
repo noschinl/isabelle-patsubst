@@ -332,7 +332,7 @@ struct
       end;
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm orig_ctxt ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
+  fun rewrite_goal_with_thm ctxt (pattern, (inst, orig_ctxt)) rule = SUBGOAL (fn (t,i) =>
     let
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
       fun rewrite_conv rule insty ctxt bounds = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
@@ -342,10 +342,10 @@ struct
       SEQ_CONCAT (Seq.map tac matches)
     end);
   
-  fun patsubst_tac orig_ctxt ctxt pattern thms =
+  fun patsubst_tac ctxt pattern thms =
     let
       val thms' = maps (prep_meta_eq ctxt) thms
-      val tac = rewrite_goal_with_thm orig_ctxt ctxt pattern
+      val tac = rewrite_goal_with_thm ctxt pattern
     in CONCAT' (map tac thms') THEN' (K distinct_subgoals_tac)end
    (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
 
@@ -511,7 +511,7 @@ struct
           val ((pats', insts'), ctxt'') = check_terms ctxt' pats insts
           val pats'' = f ctxt'' pats'
 
-        in ((pats'', ths, insts', ctxt), ctxt'') end
+        in ((pats'', ths, (insts', ctxt)), ctxt'') end
 
       val where_parser = Scan.optional
         ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)) []
@@ -522,7 +522,7 @@ struct
         in ctxt_lift scan prep_args end
     in
       Method.setup @{binding pat_subst} (subst_parser >>
-        (fn (pattern, inthms, inst, orig_ctxt) => fn ctxt => SIMPLE_METHOD' (patsubst_tac orig_ctxt ctxt (pattern, inst) inthms)))
+        (fn (pattern, inthms, inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
         "extended single-step substitution, allowing subterm selection via patterns."
     end;
 end;
