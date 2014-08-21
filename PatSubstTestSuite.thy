@@ -200,7 +200,6 @@ lemma
 
 
 (* A more complex example of instantiation involving the while combinator. *)
-(* TODO: This does not work if the type of the invariant is too general. *)
 definition "while_inv (I :: 'a \<Rightarrow> bool) (c :: 'a \<Rightarrow> bool) b s \<equiv> while c b s"
 
 lemma
