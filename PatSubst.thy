@@ -94,7 +94,7 @@ struct
     | SOME (U, _) =>
     let
       val tyenv' = if T = dummyT then tyenv else Sign.typ_match (Proof_Context.theory_of ctxt) (T, U) tyenv
-      val x = Free (the_default (Name.internal dummyN) s (*XXX*), Type.devar tyenv' T)
+      val x = Free (the_default (Name.internal dummyN) s (*XXX*), Envir.norm_type tyenv' T)
       val desc = below_abs s
       val eta_expand_cconv = CConv.rewr_conv @{thm eta_expand}
       fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
@@ -276,60 +276,61 @@ struct
             Term.map_aterms (subst idents)
           end;
 
-        fun find_var x =
-          let
-            val th_vars = Term.add_vars (Thm.prop_of thm) []
-          in
-            case AList.lookup (op=) th_vars x of
+        fun find_var thm_vars x =
+            case AList.lookup (op=) thm_vars x of
               NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem")
             | SOME T => T
-          end
 
-        fun prep_inst off (x, t) =
+        fun prep_inst tyenv (x, t) =
           let
             val t' = t
               |> Envir.subst_term_types tyenv
               |> replace_identifiers
-              |> map_types (map_type_tvar (fn ((x,idx), sort) => TVar ((x, idx + off), sort)))
             val x' =  (x, fastype_of t')
           in (x', t') end
 
         val thy = Proof_Context.theory_of ctxt
         fun certs f = map (pairself (f thy))
 
-        val raw_insts' = map (prep_inst (Thm.maxidx_of thm + 1)) raw_insts
-        val inst_maxidx = fold (Term.maxidx_term o snd) raw_insts' 0
+        val maxidx = 0
+          |> fold (Term.maxidx_term o snd) raw_insts
+          |> Term.maxidx_typs (map (snd o snd) (Vartab.dest tyenv))
+        val thm' = Thm.incr_indexes (maxidx+1) thm
+        val thm_vars = Term.add_vars (Thm.prop_of thm') []
 
-        val insts = raw_insts' |> map (apfst Var) |> certs Thm.cterm_of
+        val raw_insts' = map (fn ((s,n), t) => ((s, n + maxidx + 1), t)) raw_insts
+
+        val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts'
+        val tyenv' = fst (fold (Sign.typ_unify thy) (tyassoc) (tyenv, maxidx))
+
+        val insts = raw_insts'
+          |> map (prep_inst tyenv')
+          |> map (apfst Var)
+          |> certs Thm.cterm_of
 
         val tyinsts =
-          let
-            val tyassoc = map (fn ((x, T), _) => (find_var x, T)) raw_insts'
-            val env = fst (fold (Sign.typ_unify thy) tyassoc (Vartab.empty, inst_maxidx))
-          in fold Term.add_tvarsT (map fst tyassoc) []
-            |> map_filter (fn x as (y,_) => case Vartab.lookup env y of
-                NONE => NONE
-              | SOME (_, U) => SOME (TVar x, U))
+            fold Term.add_tvarsT (map fst tyassoc) []
+            |> map (fn x => (TVar x, Envir.norm_type tyenv' (TVar x)))
             |> certs Thm.ctyp_of
-          end
       in
-        Drule.instantiate_normalize (tyinsts, insts) thm
+        Drule.instantiate_normalize (tyinsts, insts) thm'
       end;
 
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
+  fun rewrite_goal_with_thm orig_ctxt ctxt (pattern, inst) rule = SUBGOAL (fn (t,i) =>
     let
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
       fun rewrite_conv rule insty ctxt bounds = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
-      fun tac (tyenv, _, position) = CCONVERSION (position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
+      val export = singleton (Proof_Context.export ctxt orig_ctxt)
+      fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
     in
       SEQ_CONCAT (Seq.map tac matches)
     end);
   
-  fun patsubst_tac ctxt pattern thms =
+  fun patsubst_tac orig_ctxt ctxt pattern thms =
     let
       val thms' = maps (prep_meta_eq ctxt) thms
-      val tac = rewrite_goal_with_thm ctxt pattern
+      val tac = rewrite_goal_with_thm orig_ctxt ctxt pattern
     in CONCAT' (map tac thms') THEN' (K distinct_subgoals_tac)end
    (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
 
@@ -416,7 +417,7 @@ struct
           val ri_ts = map (Syntax.parse_term ctxt) ri_vals
         in (ri_vars, ri_ts) end
 
-      fun prep_args ctxt ((raw_pats, raw_ths), raw_insts) =
+      fun prep_args ctxt ((raw_pats, raw_ths), (raw_insts, raw_fors)) =
         let
 
           fun f ctxt = (*TODO rename*)
@@ -483,27 +484,40 @@ struct
               val insts = insts_vars ~~ ts'' (* XXX length check? *)
             in ((ps', insts), ctxt') end
 
-          val ths = Attrib.eval_thms ctxt raw_ths
-          val (pats, ctxt') = prep_pats ctxt raw_pats
+          fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx) (*XXX copied *)
+
+          val ((_, pats), ctxt') = ctxt
+            |> Proof_Context.add_fixes (map read_typ raw_fors)
+            ||>> (fn ctxt => prep_pats ctxt raw_pats)
+
+          val ths = Attrib.eval_thms ctxt' raw_ths
           val insts = prep_insts ctxt' raw_insts
+
           val ((pats', insts'), ctxt'') = check_terms ctxt' pats insts
           val pats'' = f ctxt'' pats'
-        in (((pats'', ths), insts'), ctxt'') end
 
-      val instantiation_parser = Scan.optional
+        in ((pats'', ths, insts', ctxt), ctxt'') end
+
+      val where_parser = Scan.optional
         ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)) []
+      val instantiation_parser = where_parser -- Parse.for_fixes
 
       val subst_parser =
         let val scan = raw_pattern -- Parse_Spec.xthms1 -- instantiation_parser
         in ctxt_lift scan prep_args end
     in
       Method.setup @{binding pat_subst} (subst_parser >>
-        (fn ((pattern, inthms), inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
+        (fn (pattern, inthms, inst, orig_ctxt) => fn ctxt => SIMPLE_METHOD' (patsubst_tac orig_ctxt ctxt (pattern, inst) inthms)))
         "extended single-step substitution, allowing subterm selection via patterns."
     end;
 end;
 *}
 
+thm exI[where x=1]
+
 setup Pat_Subst.setup
+
+ML \<open> Proof_Context.add_fixes;Proof_Context.read_vars \<close>
+thm exI[where x="P x" for P]
 
 end
