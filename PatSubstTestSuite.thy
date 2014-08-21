@@ -234,7 +234,24 @@ by (pat_subst in "snd (while _ (\<lambda>(i, _). \<box>) _)" while_inv_def[symme
    (rule assms)
 
 
-section \<open>The "for" keyword\<close>
+(* the to keyword *)
+
+lemma "a + b = b + (a :: _ :: ab_semigroup_add)"
+  by (pat_subst at "a + b" to "b + a" ac_simps) (rule refl)
+
+lemma "a + b = b + (a :: _ :: ab_semigroup_add)"
+  by (pat_subst at "\<box> = _" to "_ + _" ac_simps) (rule refl)
+
+lemma
+  fixes a b c :: "_ :: semigroup_add"
+  shows "a + b + c = a + (b + c)"
+  by (pat_subst at "\<box> = _ " to "_ + (_ + _)" ac_simps) (rule refl)
+
+lemma
+  fixes a b c :: "_ :: semigroup_add"
+  shows "a + b + c = a + (b + c)"
+  by (pat_subst in "\<box> = _ " to "_ + (_ + _)" ac_simps) (rule refl)
+
 
 end
 

@@ -44,6 +44,8 @@ struct
      Patterns entered by the user will be of type "pattern list".  *)
   datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | All of 'b list;
 
+  exception NO_TO_MATCH
+
   (* Some types/terminology used in the code below: *)
 
   (* We rewrite subterms using rewrite conversions. These are conversions
@@ -264,18 +266,9 @@ struct
     end;
 
   (* Before rewriting, we might want to instantiate the rewriting rule. *)
-  fun inst_thm _  _ ([], _) thm = thm
-    | inst_thm ctxt idents (raw_insts, tyenv) thm =
+  fun inst_thm_insts _  ([], env) thm = (thm, env)
+    | inst_thm_insts ctxt (raw_insts, env) thm =
       let
-        (* Replace any identifiers with their corresponding bound variables. *)
-        val replace_identifiers =
-          let
-            fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
-              | subst _ t = t;
-          in
-            Term.map_aterms (subst idents)
-          end;
-
         fun find_var thm_vars x =
             case AList.lookup (op=) thm_vars x of
               NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem")
@@ -283,25 +276,17 @@ struct
 
         fun prep_inst tyenv (x, t) =
           let
-            val t' = t
-              |> Envir.subst_term_types tyenv
-              |> replace_identifiers
+            val t' = Envir.subst_term_types tyenv t
             val x' =  (x, fastype_of t')
           in (x', t') end
 
         val thy = Proof_Context.theory_of ctxt
         fun certs f = map (pairself (f thy))
 
-        val maxidx = 0
-          |> fold (Term.maxidx_term o snd) raw_insts
-          |> Term.maxidx_typs (map (snd o snd) (Vartab.dest tyenv))
-        val thm' = Thm.incr_indexes (maxidx+1) thm
-        val thm_vars = Term.add_vars (Thm.prop_of thm') []
+        val thm_vars = Term.add_vars (Thm.prop_of thm) []
 
-        val raw_insts' = map (fn ((s,n), t) => ((s, n + maxidx + 1), t)) raw_insts
-
-        val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts'
-        fun typ_unify (T,U) (tyenv,idx) = Sign.typ_unify thy (T,U) (tyenv,idx)
+        val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts
+        fun typ_unify (T,U) env = Pattern.unify_types thy (T,U) env
           handle Type.TUNIFY =>
           let
             fun prt_vt (x, (sort, T)) =
@@ -313,31 +298,78 @@ struct
                 Pretty.big_list "" (map (Syntax.pretty_typ ctxt) [T,U]),
                 Pretty.brk 1,
                 Pretty.str "with respect to type environment",
-                Pretty.big_list "" (map prt_vt (Vartab.dest tyenv)) ]
+                Pretty.big_list "" (map prt_vt (Vartab.dest (Envir.type_env env))) ]
               |> Pretty.chunks
           in Pretty.string_of_margin 50 prt |> error end
-        val tyenv' = fst (fold typ_unify tyassoc (tyenv, maxidx))
+        val env' = fold typ_unify tyassoc env
 
-        val insts = raw_insts'
-          |> map (prep_inst tyenv')
+        val insts = raw_insts
+          |> map (prep_inst (Envir.type_env env'))
           |> map (apfst Var)
           |> certs Thm.cterm_of
 
         val tyinsts =
             fold Term.add_tvarsT (map fst tyassoc) []
-            |> map (fn x => (TVar x, Envir.norm_type tyenv' (TVar x)))
+            |> map (fn x => (TVar x, Envir.norm_type (Envir.type_env env') (TVar x)))
             |> certs Thm.ctyp_of
       in
-        Drule.instantiate_normalize (tyinsts, insts) thm'
+        (Drule.instantiate_normalize (tyinsts, insts) thm, env')
       end;
 
+  fun instantiate_normalize_env thy env thm =
+    let
+      fun certs f = map (pairself (f thy))
+      val prop = Thm.prop_of thm
+      val norm_type = Envir.norm_type o Envir.type_env
+      val insts = Term.add_vars prop []
+        |> map (fn x as (s,T) => (Var (s, norm_type env T), Envir.norm_term env (Var x)))
+        |> certs Thm.cterm_of
+      val tyinsts = Term.add_tvars prop []
+        |> map (fn x => (TVar x, norm_type env (TVar x)))
+        |> certs Thm.ctyp_of
+    in Drule.instantiate_normalize (tyinsts, insts) thm end
+
+  fun inst_thm_to _ (NONE, _) thm = thm
+    | inst_thm_to ctxt (SOME to, env) thm =
+      let
+        val (_, rhs) = thm |> Thm.concl_of |> Logic.dest_equals
+        val thy = Proof_Context.theory_of ctxt
+        val env' = Pattern.unify thy (to, rhs) env
+          handle Pattern.Unif => raise NO_TO_MATCH
+      in instantiate_normalize_env thy env' thm end
+
+  fun inst_thm ctxt idents (raw_insts, to, tyenv) thm =
+    let
+      (* Replace any identifiers with their corresponding bound variables. *)
+      val maxidx = Term.maxidx_typs (map (snd o snd) (Vartab.dest tyenv)) 0
+      val env = Envir.Envir {maxidx = maxidx, tenv = Vartab.empty, tyenv = tyenv}
+      val replace_idents =
+        let
+          fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
+            | subst _ t = t;
+        in
+          Term.map_aterms (subst idents)
+        end;
+
+      val maxidx = Envir.maxidx_of env
+          |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t] @ map snd raw_insts)
+      val thm' = Thm.incr_indexes (maxidx + 1) thm
+      val raw_insts' = raw_insts
+        |> map (apsnd replace_idents)
+        |> map (fn ((s,n), t) => ((s, n + maxidx + 1), t))
+
+      val (thm'', env') = inst_thm_insts ctxt (raw_insts', env) thm'
+      val thm''' = inst_thm_to ctxt (Option.map replace_idents to, env') thm''
+    in thm''' end (*XXX rename thm'''*)
+
   (* Rewrite in subgoal i. *)
-  fun rewrite_goal_with_thm ctxt (pattern, (inst, orig_ctxt)) rule = SUBGOAL (fn (t,i) =>
+  fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rule = SUBGOAL (fn (t,i) =>
     let
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
       fun rewrite_conv rule insty ctxt bounds = CConv.rewr_conv (inst_thm ctxt bounds insty rule);
       val export = singleton (Proof_Context.export ctxt orig_ctxt)
-      fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv rule (inst, tyenv)) ctxt []) i;
+      fun tac (tyenv, _, position) th = CCONVERSION (export o position (rewrite_conv rule (inst, to, tyenv)) ctxt []) i th
+        handle NO_TO_MATCH => Seq.empty
     in
       SEQ_CONCAT (Seq.map tac matches)
     end);
@@ -432,7 +464,7 @@ struct
           val ri_ts = map (Syntax.parse_term ctxt) ri_vals
         in (ri_vars, ri_ts) end
 
-      fun prep_args ctxt ((raw_pats, raw_ths), (raw_insts, raw_fors)) =
+      fun prep_args ctxt (((raw_pats, raw_to), raw_ths), (raw_insts, raw_fors)) =
         let
 
           fun f ctxt = (*TODO rename*)
@@ -471,7 +503,7 @@ struct
 
             in map prep end
 
-          fun check_terms ctxt ps (insts_vars, insts_ts) =
+          fun check_terms ctxt ps to (insts_vars, insts_ts) =
             let
               fun safe_chop (0: int) xs = ([], xs)
                 | safe_chop n (x :: xs) = chop (n - 1) xs |>> cons x
@@ -492,12 +524,15 @@ struct
 
               fun free_constr (s,T) = Type.constraint T (Free (s, dummyT))
 
-              val ts = maps (fn (Term (t, cs)) => t :: map free_constr cs | _ => []) ps @ insts_ts
+              val tos = case to of NONE => [] | SOME t => [t]
+
+              val ts = maps (fn (Term (t, cs)) => t :: map free_constr cs | _ => []) ps @ tos @ insts_ts
               val ts' = Syntax.check_terms (hole_syntax ctxt) ts
               val ctxt' = fold Variable.declare_term ts' ctxt
-              val (ps', ts'') = fold_map (reinsert_pat ctxt') ps ts'
+              val (ps', (to', ts'')) = fold_map (reinsert_pat ctxt') ps ts'
+                ||> (fn xs => case to of NONE => (NONE, xs) | SOME _ => (SOME (hd xs), tl xs))
               val insts = insts_vars ~~ ts'' (* XXX length check? *)
-            in ((ps', insts), ctxt') end
+            in ((ps', to', insts), ctxt') end
 
           fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx) (*XXX copied *)
 
@@ -506,19 +541,22 @@ struct
             ||>> (fn ctxt => prep_pats ctxt raw_pats)
 
           val ths = Attrib.eval_thms ctxt' raw_ths
+          val to = Option.map (Syntax.parse_term ctxt') raw_to
           val insts = prep_insts ctxt' raw_insts
 
-          val ((pats', insts'), ctxt'') = check_terms ctxt' pats insts
+          val ((pats', to', insts'), ctxt'') = check_terms ctxt' pats to insts
           val pats'' = f ctxt'' pats'
 
-        in ((pats'', ths, (insts', ctxt)), ctxt'') end
+        in ((pats'', ths, (insts', to', ctxt)), ctxt'') end
+
+      val to_parser = Scan.option ((Args.$$$ "to") |-- Parse.term)
 
       val where_parser = Scan.optional
         ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)) []
       val instantiation_parser = where_parser -- Parse.for_fixes
 
       val subst_parser =
-        let val scan = raw_pattern -- Parse_Spec.xthms1 -- instantiation_parser
+        let val scan = raw_pattern -- to_parser -- Parse_Spec.xthms1 -- instantiation_parser
         in ctxt_lift scan prep_args end
     in
       Method.setup @{binding pat_subst} (subst_parser >>
