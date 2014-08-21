@@ -316,7 +316,7 @@ struct
                 Pretty.big_list "" (map prt_vt (Vartab.dest tyenv)) ]
               |> Pretty.chunks
           in Pretty.string_of_margin 50 prt |> error end
-        val tyenv' = fst (fold typ_unify (@{print} tyassoc) (@{print} tyenv, maxidx))
+        val tyenv' = fst (fold typ_unify tyassoc (tyenv, maxidx))
 
         val insts = raw_insts'
           |> map (prep_inst tyenv')

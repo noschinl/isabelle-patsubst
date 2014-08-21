@@ -126,6 +126,13 @@ lemma
 by (pat_subst in "\<lambda>any_identifier_works. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. any_identifier_works < x + 1")
    (rule assms)
 
+(* The for keyword *)
+
+lemma
+  assumes "\<And>x. P (\<lambda>n. f_inv (g x) n) = x"
+  shows "P (\<lambda>n. f n) = x"
+  by (pat_subst in "\<lambda>n. \<box>" f_inv_def[symmetric] where I="g y" for y) fact
+
 (* The all-keyword. *)
 
 lemma
@@ -225,6 +232,9 @@ lemma
            ) = 12"
 by (pat_subst in "snd (while _ (\<lambda>(i, _). \<box>) _)" while_inv_def[symmetric] where ?I = "\<lambda>(j, x). x = j + 3*i" )
    (rule assms)
+
+
+section \<open>The "for" keyword\<close>
 
 end
 
