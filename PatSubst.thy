@@ -328,14 +328,16 @@ struct
         |> certs Thm.ctyp_of
     in Drule.instantiate_normalize (tyinsts, insts) thm end
 
+  fun unify_with_rhs thy to env thm =
+    let
+      val (_, rhs) = thm |> Thm.concl_of |> Logic.dest_equals
+      val env' = Pattern.unify thy (to, rhs) env
+        handle Pattern.Unif => raise NO_TO_MATCH
+    in env' end
+
   fun inst_thm_to _ (NONE, _) thm = thm
-    | inst_thm_to ctxt (SOME to, env) thm =
-      let
-        val (_, rhs) = thm |> Thm.concl_of |> Logic.dest_equals
-        val thy = Proof_Context.theory_of ctxt
-        val env' = Pattern.unify thy (to, rhs) env
-          handle Pattern.Unif => raise NO_TO_MATCH
-      in instantiate_normalize_env thy env' thm end
+    | inst_thm_to thy (SOME to, env) thm =
+        instantiate_normalize_env thy (unify_with_rhs thy to env thm) thm
 
   fun inst_thm ctxt idents (raw_insts, to, tyenv) thm =
     let
@@ -357,17 +359,25 @@ struct
         |> map (apsnd replace_idents)
         |> map (fn ((s,n), t) => ((s, n + maxidx + 1), t))
 
+      val thy = Proof_Context.theory_of ctxt
+
       val (thm'', env') = inst_thm_insts ctxt (raw_insts', env) thm'
-      val thm''' = inst_thm_to ctxt (Option.map replace_idents to, env') thm''
+      val thm''' = inst_thm_to thy (Option.map replace_idents to, env') thm''
     in SOME thm''' end
     handle NO_TO_MATCH => NONE (*XXX rename thm'''*)
 
   (* Rewrite in subgoal i. *)
   fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
     let
+      val thy = Proof_Context.theory_of ctxt
+      val filtered_rules =
+        case to of
+          NONE => rules
+        | SOME t => filter (is_some o try (unify_with_rhs thy t (Envir.empty 0))) rules
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
+
       fun rewrite_conv insty ctxt bounds=
-        CConv.rewrs_conv (map_filter (inst_thm ctxt bounds insty) rules);
+        CConv.rewrs_conv (map_filter (inst_thm ctxt bounds insty) filtered_rules);
       val export = singleton (Proof_Context.export ctxt orig_ctxt)
       fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
     in
