@@ -306,7 +306,7 @@ struct
                 Pretty.str "with respect to type environment",
                 Pretty.big_list "" (map prt_vt (Vartab.dest (Envir.type_env env))) ]
               |> Pretty.chunks
-          in Pretty.string_of_margin 50 prt |> error end
+          in Pretty.string_of prt |> error end
         val env' = fold typ_unify tyassoc env
 
         val insts = raw_insts
