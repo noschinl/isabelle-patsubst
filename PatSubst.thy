@@ -380,8 +380,9 @@ struct
         | SOME t => filter (is_some o try (unify_with_rhs thy t (Envir.empty 0))) rules
       val matches = find_matches ctxt pattern (Vartab.empty, t, I);
 
-      fun rewrite_conv insty ctxt bounds=
+      fun rewrite_conv insty ctxt bounds =
         CConv.rewrs_conv (map_filter (inst_thm ctxt bounds insty) filtered_rules);
+
       val export = singleton (Proof_Context.export ctxt orig_ctxt)
       fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
     in
