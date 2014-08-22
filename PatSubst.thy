@@ -293,7 +293,7 @@ struct
 
         val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts
         fun typ_unify (T,U) env = Pattern.unify_types thy (T,U) env
-          handle Type.TUNIFY =>
+          handle Pattern.Unif =>
           let
             fun prt_vt (x, (sort, T)) =
               map (Syntax.pretty_typ ctxt) [TVar (x, sort), T]
