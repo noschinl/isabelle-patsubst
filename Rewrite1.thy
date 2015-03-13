@@ -12,7 +12,6 @@ lemma eta_expand:
 
 ML_file "cconv.ML"
 ML_file "rewrite1.ML"
-
 setup Rewrite1.setup
 
 end

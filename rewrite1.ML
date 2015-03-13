@@ -23,8 +23,6 @@ end
 structure Rewrite1 : REWRITE1 =
 struct
 
-(* Data type to represent a single pattern step.
-   Patterns entered by the user will be of type "pattern list".  *)
 datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | All of 'b list;
 
 exception NO_TO_MATCH
@@ -368,7 +366,14 @@ fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL 
       CConv.rewrs_cconv (map_filter (inst_thm ctxt bounds insty) filtered_rules);
 
     val export = singleton (Proof_Context.export ctxt orig_ctxt)
-    fun tac (tyenv, _, position) = CCONVERSION (export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
+
+    fun distinct_prems th =
+      case Seq.pull (distinct_subgoals_tac th) of
+        NONE => th
+      | SOME (th', _) => th';
+
+    fun tac (tyenv, _, position) = CCONVERSION
+      (distinct_prems o export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i;
   in
     SEQ_CONCAT (Seq.map tac matches)
   end);
@@ -377,8 +382,7 @@ fun rewrite1_tac ctxt pattern thms =
   let
     val thms' = maps (prep_meta_eq ctxt) thms
     val tac = rewrite_goal_with_thm ctxt pattern thms'
-  in tac THEN' (K distinct_subgoals_tac)end
- (* TODO: K distinct_subgoals_tac is completely non-canonic! *)
+  in tac end
 
 (* Method setup for pat_subst.
    TODO: Merge with subst method in 'src/Tools/eqsubst.ML'. *)
@@ -558,6 +562,6 @@ val setup =
   in
     Method.setup @{binding rewrite1} (subst_parser >>
       (fn (pattern, inthms, inst) => fn ctxt => SIMPLE_METHOD' (rewrite1_tac ctxt (pattern, inst) inthms)))
-      "extended single-step substitution, allowing subterm selection via patterns."
+      "single-step rewriting, allowing subterm selection via patterns."
   end;
 end;
