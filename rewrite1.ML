@@ -5,7 +5,7 @@
   via patterns. It also supports advanced instantiaton based on this
   pattern language.
 
-  The patterns accepted by pat_subst are of the following form:
+  The patterns accepted by rewrite1 are of the following form:
     <atom>    ::= <term> | concl | asm | goal
     <pattern> ::= (in <atom> | at <atom> | for <names>) [<pattern>]
 
@@ -16,11 +16,11 @@
   which can then be used to match arbitary subterms inside abstractions.
 *)
 
-signature PAT_SUBST = sig
+signature REWRITE1 = sig
   val setup : theory -> theory
 end
 
-structure Pat_Subst : PAT_SUBST =
+structure Rewrite1 : REWRITE1 =
 struct
 
 (* Data type to represent a single pattern step.
@@ -178,7 +178,7 @@ fun valid_match_points ctxt =
 fun is_hole (Var ((name, _), _)) = (name = holeN)
   | is_hole _ = false;
 
-fun is_hole_const (Const (@{const_name patsubst_HOLE}, _)) = true
+fun is_hole_const (Const (@{const_name rewrite1_HOLE}, _)) = true
   | is_hole_const _ = false
 
 fun no_holes tm =
@@ -188,7 +188,7 @@ fun no_holes tm =
 val hole_syntax =
   let
     (* Modified variant of Term.replace_hole *)
-    fun replace_hole Ts (Const (@{const_name patsubst_HOLE}, T)) i =
+    fun replace_hole Ts (Const (@{const_name rewrite1_HOLE}, T)) i =
           (list_comb (Var ((holeN, i), Ts ---> T), map_range Bound (length Ts)), i + 1)
       | replace_hole Ts (Abs (x, T, t)) i =
           let val (t', i') = replace_hole (T :: Ts) t i
@@ -373,7 +373,7 @@ fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL 
     SEQ_CONCAT (Seq.map tac matches)
   end);
 
-fun patsubst_tac ctxt pattern thms =
+fun rewrite1_tac ctxt pattern thms =
   let
     val thms' = maps (prep_meta_eq ctxt) thms
     val tac = rewrite_goal_with_thm ctxt pattern thms'
@@ -556,8 +556,8 @@ val setup =
       let val scan = raw_pattern -- to_parser -- Parse.xthms1 -- instantiation_parser
       in ctxt_lift scan prep_args end
   in
-    Method.setup @{binding pat_subst} (subst_parser >>
-      (fn (pattern, inthms, inst) => fn ctxt => SIMPLE_METHOD' (patsubst_tac ctxt (pattern, inst) inthms)))
+    Method.setup @{binding rewrite1} (subst_parser >>
+      (fn (pattern, inthms, inst) => fn ctxt => SIMPLE_METHOD' (rewrite1_tac ctxt (pattern, inst) inthms)))
       "extended single-step substitution, allowing subterm selection via patterns."
   end;
 end;
