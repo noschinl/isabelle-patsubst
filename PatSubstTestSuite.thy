@@ -252,6 +252,5 @@ lemma
   shows "a + b + c = a + (b + c)"
   by (pat_subst in "\<box> = _ " to "_ + (_ + _)" ac_simps) (rule refl)
 
-
 end
 

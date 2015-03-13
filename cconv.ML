@@ -1,210 +1,225 @@
+infix 1 then_cconv;
+infix 0 else_cconv;
+
+type cconv = conv
+
+signature BASIC_CCONV =
+sig
+  val then_cconv: cconv * cconv -> cconv;
+  val else_cconv: cconv * cconv -> cconv;
+  val CCONVERSION: cconv -> int -> tactic;
+end;
+
 signature CCONV =
 sig
-  val else_conv: conv * conv -> conv
-
-  val no_conv : conv
-  val all_conv : conv
-  val first_conv: conv list -> conv
-  val abs_conv: (cterm * Proof.context -> conv) -> Proof.context -> conv
-  val combination_conv: conv -> conv -> conv
-  val comb_conv: conv -> conv
-  val arg_conv: conv -> conv
-  val fun_conv: conv -> conv
-  val arg1_conv: conv -> conv
-  val fun2_conv: conv -> conv
-  val rewr_conv : thm -> conv
-  val rewrs_conv : thm list -> conv
-  val params_conv: int -> (Proof.context -> conv) -> Proof.context -> conv
-  val prems_conv: int -> conv -> conv
-  val concl_conv: int -> conv -> conv
-  val fconv_rule: conv -> thm -> thm
-  val gconv_rule: conv -> int -> thm -> thm
-  val CCONVERSION: conv -> int -> tactic
+  include BASIC_CCONV;
+  val no_cconv: cconv;
+  val all_cconv: cconv;
+  val first_cconv: cconv list -> cconv;
+  val abs_cconv: (cterm * Proof.context -> cconv) -> Proof.context -> cconv;
+  val combination_cconv: cconv -> cconv -> cconv;
+  val comb_cconv: cconv -> cconv;
+  val arg_cconv: cconv -> cconv;
+  val fun_cconv: cconv -> cconv;
+  val arg1_cconv: cconv -> cconv;
+  val fun2_cconv: cconv -> cconv;
+  val rewr_cconv: thm -> cconv;
+  val rewrs_cconv: thm list -> cconv;
+  val params_cconv: int -> (Proof.context -> cconv) -> Proof.context -> cconv;
+  val prems_cconv: int -> cconv -> cconv;
+  val concl_cconv: int -> cconv -> cconv;
+  val fconv_rule: cconv -> thm -> thm;
+  val gconv_rule: cconv -> int -> thm -> thm;
 end;
 
 structure CConv : CCONV =
 struct
-  (* Congruence rules used to apply conversions to subterms.*)
-  local
-    val certify = Thm.cterm_of @{context}
-    val read_term = certify o Simple_Syntax.read_term;
-    val read_prop = certify o Simple_Syntax.read_prop;
+
+val concl_lhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_lhs
+val concl_rhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_rhs
+
+fun transitive th1 th2 = Drule.transitive_thm OF [th1, th2];
+
+val combination_thm =
+  let
+    val fg = @{cprop "f :: 'a :: {} \<Rightarrow> 'b :: {} \<equiv> g"}
+    val st = @{cprop "s :: 'a :: {} \<equiv> t"}
+    val thm = Thm.combination (Thm.assume fg) (Thm.assume st)
+      |> Thm.implies_intr st
+      |> Thm.implies_intr fg
+  in Drule.export_without_context thm end;
+  
+fun abstract_rule_thm n =
+  let
+    val eq = @{cprop "\<And>x :: 'a :: {}. (s :: 'a \<Rightarrow> 'b :: {}) x \<equiv> t x"}
+    val x = @{cterm "x :: 'a :: {}"}
+    val thm = eq
+      |> Thm.assume
+      |> Thm.forall_elim x
+      |> Thm.abstract_rule n x
+      |> Thm.implies_intr eq
+  in Drule.export_without_context thm end;
+
+val no_cconv = Conv.no_conv;
+val all_cconv = Conv.all_conv;
+
+fun (cv1 else_cconv cv2) ct =
+  (cv1 ct
+    handle THM _ => cv2 ct
+      | CTERM _ => cv2 ct
+      | TERM _ => cv2 ct
+      | TYPE _ => cv2 ct);
+
+fun (cv1 then_cconv cv2) ct =
+  let
+    val eq1 = cv1 ct;
+    val eq2 = cv2 (concl_rhs_of eq1);
   in
-    fun transitive th1 th2 = Drule.transitive_thm OF [th1, th2];
-  
-    val combination_thm =
-      let
-        val fg = read_prop "f :: 'a => 'b == g :: 'a => 'b";
-        val st = read_prop "s :: 'a == t :: 'a";
-        val fgthm = Thm.assume fg;
-        val stthm = Thm.assume st;
-        val thm = Thm.implies_intr fg (Thm.implies_intr st (Thm.combination fgthm stthm))
-      in Drule.export_without_context thm end;
-      
-    fun abstract_rule_thm n =
-      let
-        val eq = read_prop "!!x :: 'a. (s :: 'a => 'b) x == (t :: 'a => 'b) x";
-        val x = read_term "x :: 'a";
-        val thm = eq
-          |> Thm.assume
-          |> Thm.forall_elim x
-          |> Thm.abstract_rule n x
-          |> Thm.implies_intr eq
-      in Drule.export_without_context thm end;
+    if Thm.is_reflexive eq1 then eq2
+    else if Thm.is_reflexive eq2 then eq1
+    else transitive eq1 eq2
   end;
+
+fun first_cconv cvs = fold_rev (curry op else_cconv) cvs no_cconv;
+
+fun rewr_cconv rule ct =
+  let
+    val rule1 = Thm.incr_indexes (Thm.maxidx_of_cterm ct + 1) rule;
+    val lhs = concl_lhs_of rule1;
+    val rule2 = Thm.rename_boundvars (Thm.term_of lhs) (Thm.term_of ct) rule1;
+    val rule3 = Thm.instantiate (Thm.match (lhs, ct)) rule2
+                handle Pattern.MATCH => raise CTERM ("rewr_cconv", [lhs, ct]);
+    val rule4 =
+      if concl_lhs_of rule3 aconvc ct then rule3
+      else let val ceq = Thm.dest_fun2 (Thm.cprop_of rule3)
+           in rule3 COMP Thm.trivial (Thm.mk_binop ceq ct (concl_rhs_of rule3)) end;
+  in
+    transitive rule4 (Thm.beta_conversion true (concl_rhs_of rule4))
+  end;
+
+fun rewrs_cconv rules = first_cconv (map rewr_cconv rules);
   
-  val no_conv = Conv.no_conv;
-  val all_conv = Conv.all_conv;
+fun combination_cconv cv1 cv2 cterm =
+  let val (l, r) = Thm.dest_comb cterm;
+  in combination_thm OF [cv1 l, cv2 r] end;
 
-  fun (cv1 else_conv cv2) ct =
-    (cv1 ct
-      handle THM _ => cv2 ct
-        | CTERM _ => cv2 ct
-        | TERM _ => cv2 ct
-        | TYPE _ => cv2 ct);
+fun comb_cconv cv = combination_cconv cv cv;
+
+fun fun_cconv conversion =
+  combination_cconv conversion all_cconv;
   
-  fun first_conv cvs = fold_rev (curry op else_conv) cvs no_conv;
+fun arg_cconv conversion =
+  combination_cconv all_cconv conversion;
+
+fun abs_cconv cv ctxt ct =
+  (case Thm.term_of ct of
+     Abs (x, _, _) =>
+       let
+         (* Instantiate the rule properly and apply it to the eq theorem. *)
+         fun abstract_rule u v eq = 
+           let
+             (* Take a variable v and an equality theorem of form:
+                  P1 Pure.imp ... Pure.imp Pn Pure.imp L v == R v
+                And build a term of form:
+                  !!v. (%x. L x) v == (%x. R x) v *)
+             fun mk_concl var eq =
+               let
+                 val certify = Thm.cterm_of ctxt;
+                 fun abs term = (Term.lambda var term) $ var;
+                 fun equals_cong f t =
+                   Logic.dest_equals t
+                   |> (fn (a, b) => (f a, f b))
+                   |> Logic.mk_equals
+               in
+                 Thm.concl_of eq
+                 |> equals_cong abs
+                 |> Logic.all var |> certify
+               end;
+             val rule = abstract_rule_thm x;
+             val inst = Thm.match (Drule.cprems_of rule |> hd, mk_concl (Thm.term_of v) eq);
+           in
+             (Drule.instantiate_normalize inst rule OF [Drule.generalize ([], [u]) eq])
+             |> Drule.zero_var_indexes
+           end;
+         
+         (* Destruct the abstraction and apply the conversion. *)
+         val (u, ctxt') = yield_singleton Variable.variant_fixes Name.uu ctxt;
+         val (v, ct') = Thm.dest_abs (SOME u) ct;
+         val eq = cv (v, ctxt') ct';
+       in
+         if Thm.is_reflexive eq
+         then all_cconv ct
+         else abstract_rule u v eq
+       end
+   | _ => raise CTERM ("abs_cconv", [ct]));
+
+val arg1_cconv = fun_cconv o arg_cconv;
+val fun2_cconv = fun_cconv o fun_cconv;
   
-  (* Rewrite conversion intended to work with conditional rules. *)
-  fun rewr_conv rule ct =
-    let
-      val lhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_lhs
-      val rhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_rhs
-      val rule1 = Thm.incr_indexes (Thm.maxidx_of_cterm ct + 1) rule;
-      val lhs = lhs_of rule1;
-      val rule2 = Thm.rename_boundvars (Thm.term_of lhs) (Thm.term_of ct) rule1;
-      val rule3 = Thm.instantiate (Thm.match (lhs, ct)) rule2
-                  handle Pattern.MATCH => raise CTERM ("rewr_conv", [lhs, ct]);
-      val rule4 =
-        if lhs_of rule3 aconvc ct then rule3
-        else let val ceq = Thm.dest_fun2 (Thm.cprop_of rule3)
-             in rule3 COMP Thm.trivial (Thm.mk_binop ceq ct (rhs_of rule3)) end;
-    in
-      transitive rule4 (Thm.beta_conversion true (rhs_of rule4))
-    end;
+(* conversions on HHF rules *)
 
-  fun rewrs_conv rules = first_conv (map rewr_conv rules);
-    
-  fun combination_conv cv1 cv2 cterm =
-    let val (l, r) = Thm.dest_comb cterm;
-    in combination_thm OF [cv1 l, cv2 r] end;
+(*rewrite B in !!x1 ... xn. B*)
+fun params_cconv n cv ctxt ct =
+  if n <> 0 andalso Logic.is_all (Thm.term_of ct)
+  then arg_cconv (abs_cconv (params_cconv (n - 1) cv o #2) ctxt) ct
+  else cv ctxt ct;
 
-  fun comb_conv cv = combination_conv cv cv;
+(* TODO: This code behaves not exactly like Conv.prems_cconv does.
+         Fix this! *)
+(*rewrite the A's in A1 Pure.imp ... Pure.imp An Pure.imp B*)
+fun prems_cconv 0 cv ct = cv ct
+  | prems_cconv n cv ct =
+      (case ct |> Thm.term_of of
+        (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => ((if n = 1 then fun_cconv else I) o arg_cconv) (prems_cconv (n-1) cv) ct
+      | _ =>  cv ct);
 
-  fun fun_conv conversion =
-    combination_conv conversion all_conv;
-    
-  fun arg_conv conversion =
-    combination_conv all_conv conversion;
-  
-  (* We also need to extend abs_conv to work with conditional rules. *)
-  fun abs_conv cv ctxt ct =
-    (case Thm.term_of ct of
-       Abs (x, _, _) =>
-         let
-           (* Instantiate the rule properly and apply it to the eq theorem. *)
-           fun abstract_rule u v eq = 
-             let
-               (* Take a variable v and an equality theorem of form:
-                    P1 Pure.imp ... Pure.imp Pn Pure.imp L v == R v
-                  And build a term of form:
-                    !!v. (%x. L x) v == (%x. R x) v *)
-               fun mk_concl var eq =
-                 let
-                   val certify = Thm.cterm_of ctxt;
-                   fun abs term = (Term.lambda var term) $ var;
-                   fun equals_cong f t =
-                     Logic.dest_equals t
-                     |> (fn (a, b) => (f a, f b))
-                     |> Logic.mk_equals
-                 in
-                   Thm.concl_of eq
-                   |> equals_cong abs
-                   |> Logic.all var |> certify
-                 end;
-               val rule = abstract_rule_thm x;
-               val inst = Thm.match (Drule.cprems_of rule |> hd, mk_concl (Thm.term_of v) eq);
-             in
-               (Drule.instantiate_normalize inst rule OF [Drule.generalize ([], [u]) eq])
-               |> Drule.zero_var_indexes
-             end;
-           
-           (* Destruct the abstraction and apply the conversion. *)
-           val (u, ctxt') = yield_singleton Variable.variant_fixes Name.uu ctxt;
-           val (v, ct') = Thm.dest_abs (SOME u) ct;
-           val eq = cv (v, ctxt') ct';
-         in
-           if Thm.is_reflexive eq
-           then all_conv ct
-           else abstract_rule u v eq
-         end
-     | _ => raise CTERM ("abs_conv", [ct]));
-  
-  val arg1_conv = fun_conv o arg_conv;
-  val fun2_conv = fun_conv o fun_conv;
-    
-  (* conversions on HHF rules *)
+(*rewrite B in A1 Pure.imp ... Pure.imp An Pure.imp B*)
+fun concl_cconv 0 cv ct = cv ct
+  | concl_cconv n cv ct =
+      (case ct |> Thm.term_of of
+        (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => arg_cconv (concl_cconv (n-1) cv) ct
+      | _ =>  cv ct);
 
-  (*rewrite B in !!x1 ... xn. B*)
-  fun params_conv n cv ctxt ct =
-    if n <> 0 andalso Logic.is_all (Thm.term_of ct)
-    then arg_conv (abs_conv (params_conv (n - 1) cv o #2) ctxt) ct
-    else cv ctxt ct;
+(*forward conversion, cf. FCONV_RULE in LCF*)
+fun fconv_rule cv th =
+  let 
+    val eq = cv (Thm.cprop_of th);
+  in
+    if Thm.is_reflexive eq then th
+    else th COMP (Thm.permute_prems 0 (Thm.nprems_of eq) (eq RS Drule.equal_elim_rule1))
+  end;
 
-  (* TODO: This code behaves not exactly like Conv.prems_conv does.
-           Fix this! *)
-  (*rewrite the A's in A1 Pure.imp ... Pure.imp An Pure.imp B*)
-  fun prems_conv 0 cv ct = cv ct
-    | prems_conv n cv ct =
-        (case ct |> Thm.term_of of
-          (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => ((if n = 1 then fun_conv else I) o arg_conv) (prems_conv (n-1) cv) ct
-        | _ =>  cv ct);
+(*goal conversion*)
+fun gconv_rule cv i th =
+  (case try (Thm.cprem_of th) i of
+    SOME ct =>
+      let
+        val eq = cv ct;
+        
+        (* Drule.with_subgoal assumes that there are no new premises generated
+           and thus rotates the premises wrongly. *)
+        fun with_subgoal i f thm =
+          let
+            val num_prems = Thm.nprems_of thm;
+            val rotate_to_front = rotate_prems (i - 1);
+            fun rotate_back thm = rotate_prems (1 - i + num_prems - Thm.nprems_of thm) thm;
+          in
+            thm |> rotate_to_front |> f |> rotate_back
+          end;
+      in
+        if Thm.is_reflexive eq then th
+        else with_subgoal i (fconv_rule (arg1_cconv (K eq))) th
+      end
+  | NONE => raise THM ("gconv_rule", i, [th]));
 
-  (*rewrite B in A1 Pure.imp ... Pure.imp An Pure.imp B*)
-  fun concl_conv 0 cv ct = cv ct
-    | concl_conv n cv ct =
-        (case ct |> Thm.term_of of
-          (Const (@{const_name "Pure.imp"}, _) $ _) $ _ => arg_conv (concl_conv (n-1) cv) ct
-        | _ =>  cv ct);
-  
-  (*forward conversion, cf. FCONV_RULE in LCF*)
-  fun fconv_rule cv th =
-    let 
-      val eq = cv (Thm.cprop_of th);
-    in
-      if Thm.is_reflexive eq then th
-      else th COMP (Thm.permute_prems 0 (Thm.nprems_of eq) (eq RS Drule.equal_elim_rule1))
-    end;
+  (* Conditional conversions as tactics. *)
+fun CCONVERSION cv i st = Seq.single (gconv_rule cv i st)
+  handle THM _ => Seq.empty
+       | CTERM _ => Seq.empty
+       | TERM _ => Seq.empty
+       | TYPE _ => Seq.empty;
 
-  (*goal conversion*)
-  fun gconv_rule cv i th =
-    (case try (Thm.cprem_of th) i of
-      SOME ct =>
-        let
-          val eq = cv ct;
-          
-          (* Drule.with_subgoal assumes that there are no new premises generated
-             and thus rotates the premises wrongly. *)
-          fun with_subgoal i f thm =
-            let
-              val num_prems = Thm.nprems_of thm;
-              val rotate_to_front = rotate_prems (i - 1);
-              fun rotate_back thm = rotate_prems (1 - i + num_prems - Thm.nprems_of thm) thm;
-            in
-              thm |> rotate_to_front |> f |> rotate_back
-            end;
-        in
-          if Thm.is_reflexive eq then th
-          else with_subgoal i (fconv_rule (arg1_conv (K eq))) th
-        end
-    | NONE => raise THM ("gconv_rule", i, [th]));
-
-    (* Conditional conversions as tactics. *)
-  fun CCONVERSION cv i st = Seq.single (gconv_rule cv i st)
-    handle THM _ => Seq.empty
-         | CTERM _ => Seq.empty
-         | TERM _ => Seq.empty
-         | TYPE _ => Seq.empty;
 end;
 
-val CCONVERSION = CConv.CCONVERSION
+structure Basic_CConv: BASIC_CCONV = CConv;
+open Basic_CConv;
