@@ -286,13 +286,13 @@ struct
             val x' =  (x, fastype_of t')
           in (x', t') end
 
-        val thy = Proof_Context.theory_of ctxt
-        fun certs f = map (pairself (f thy))
+        fun certs f = map (apply2 (f ctxt))
 
         val thm_vars = Term.add_vars (Thm.prop_of thm) []
 
         val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts
-        fun typ_unify (T,U) env = Pattern.unify_types thy (T,U) env
+        val context  = Context.Proof ctxt
+        fun typ_unify (T,U) env = Pattern.unify_types context (T,U) env
           handle Pattern.Unif =>
           let
             fun prt_vt (x, (sort, T)) =

@@ -34,7 +34,7 @@ structure CConv : CCONV =
 struct
   (* Congruence rules used to apply conversions to subterms.*)
   local
-    val certify = Thm.cterm_of @{theory}
+    val certify = Thm.cterm_of @{context}
     val read_term = certify o Simple_Syntax.read_term;
     val read_prop = certify o Simple_Syntax.read_prop;
   in
@@ -78,7 +78,7 @@ struct
     let
       val lhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_lhs
       val rhs_of = Thm.cprop_of #> Drule.strip_imp_concl #> Thm.dest_equals_rhs
-      val rule1 = Thm.incr_indexes (#maxidx (Thm.rep_cterm ct) + 1) rule;
+      val rule1 = Thm.incr_indexes (Thm.maxidx_of_cterm ct + 1) rule;
       val lhs = lhs_of rule1;
       val rule2 = Thm.rename_boundvars (Thm.term_of lhs) (Thm.term_of ct) rule1;
       val rule3 = Thm.instantiate (Thm.match (lhs, ct)) rule2
@@ -119,7 +119,7 @@ struct
                     !!v. (%x. L x) v == (%x. R x) v *)
                fun mk_concl var eq =
                  let
-                   val certify = Thm.cterm_of (Thm.theory_of_thm eq);
+                   val certify = Thm.cterm_of ctxt;
                    fun abs term = (Term.lambda var term) $ var;
                    fun equals_cong f t =
                      Logic.dest_equals t
