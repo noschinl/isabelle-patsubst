@@ -57,7 +57,6 @@ type focusterm = Type.tyenv * term * subterm_position
 val dummyN = Name.internal "__dummy"
 val holeN = Name.internal "_hole"
 
-(* changes object "=" to meta "==" which prepares a given rewrite rule. *)
 fun prep_meta_eq ctxt =
   Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
 
