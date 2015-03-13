@@ -1,11 +1,3 @@
-theory cconv
-imports Main
-begin
-
-(* Implementation of the conversion package that
-   adds support for conditional rewrite rules.*)
-   
-ML {*
 signature CCONV =
 sig
   val else_conv: conv * conv -> conv
@@ -216,7 +208,3 @@ struct
 end;
 
 val CCONVERSION = CConv.CCONVERSION
-
-*}
-
-end
