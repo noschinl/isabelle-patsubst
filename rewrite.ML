@@ -133,8 +133,10 @@ fun ft_for ctxt idents (ft as (_, t, _) : focusterm) =
           | (x :: xs) => (xs , desc o ft_all ctxt x)
         end
       | f rev_idents _ = (rev_idents, I)
-    val desc = snd (f (rev idents) t)
-  in desc ft end
+  in case f (rev idents) t of
+      ([], ft') => SOME (ft' ft)
+    | _ => NONE
+  end
 
 fun ft_concl ctxt (ft as (_, t, _) : focusterm) =
   case t of
@@ -251,7 +253,7 @@ fun find_matches ctxt pattern_list =
       | apply_pat In = Seq.maps (valid_match_points ctxt)
       | apply_pat Asm = Seq.maps (seq_unfold (try (ft_assm ctxt)) o ft_params ctxt)
       | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
-      | apply_pat (All idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
+      | apply_pat (All idents) = Seq.map_filter ((ft_for ctxt (map (apfst SOME) idents)))
       | apply_pat (Term x) = Seq.map_filter ( (move_term ctxt x))
 
     fun apply_pats ft = ft
