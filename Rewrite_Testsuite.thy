@@ -138,31 +138,31 @@ lemma
 lemma
   assumes "P (2 + 1)"
   shows "\<And>x y. P (1 + 2 :: nat)"
-by (rewrite in "P (1 + 2)" at all (x) add.commute)
+by (rewrite in "P (1 + 2)" at for (x) add.commute)
    (rule assms)
 
 lemma
   assumes "\<And>x y. P (y + x)"
   shows "\<And>x y. P (x + y :: nat)"
-by (rewrite in "P (x + _)" at all (x y) add.commute)
+by (rewrite in "P (x + _)" at for (x y) add.commute)
    (rule assms)
 
 lemma
   assumes "\<And>x y z. y + x + z = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (rewrite at "x + y" in "x + y + z" in concl at all (x y z) add.commute)
+by (rewrite at "x + y" in "x + y + z" in concl at for (x y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. z + (x + y) = z + y + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (rewrite at "(_ + y) + z" in concl at all (y z) add.commute)
+by (rewrite at "(_ + y) + z" in concl at for (y z) add.commute)
    (rule assms)
    
 lemma
   assumes "\<And>x y z. x + y + z = y + z + (x::int)"
   shows   "\<And>x y z. x + y + z = z + y + (x::int)"
-by (rewrite at "\<box> + _" at "_ = \<box>" in concl at all () add.commute)
+by (rewrite at "\<box> + _" at "_ = \<box>" in concl at for () add.commute)
    (rule assms)
 
 (* The all-keyword can be used anywhere in the pattern where there is an \<And>-Quantifier.
@@ -171,7 +171,7 @@ lemma
   assumes "(\<And>(x::int). x < 1 + x)"
   and     "(x::int) + 1 > x"
   shows   "(\<And>(x::int). x + 1 > x) \<Longrightarrow> (x::int) + 1 > x"
-by (rewrite at "x + 1" in all (x) at asm add.commute)
+by (rewrite at "x + 1" in for (x) at asm add.commute)
    (rule assms)
 
 (* eta-equivalence *)

@@ -6,7 +6,7 @@
   pattern language.
 
   The patterns accepted by rewrite are of the following form:
-    <atom>    ::= <term> | "concl" | "asm" | "all" "(" <names> ")"
+    <atom>    ::= <term> | "concl" | "asm" | "for" "(" <names> ")"
     <pattern> ::= (in <atom> | at <atom>) [<pattern>]
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
@@ -24,6 +24,14 @@ structure Rewrite : REWRITE1 =
 struct
 
 datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | All of 'b list;
+
+fun map_term_pattern f (Term x) = f x
+  | map_term_pattern _ (All ss) = (All ss)
+  | map_term_pattern _ At = At
+  | map_term_pattern _ In = In
+  | map_term_pattern _ Concl = Concl
+  | map_term_pattern _ Asm = Asm
+
 
 exception NO_TO_MATCH
 
@@ -393,7 +401,7 @@ val setup =
         val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In)
         val atom =  (Args.$$$ "asm" >> K Asm) ||
           (Args.$$$ "concl" >> K Concl) ||
-          (Args.$$$ "all" |-- Args.parens (Scan.optional Parse.fixes []) >> All) ||
+          (Args.$$$ "for" |-- Args.parens (Scan.optional Parse.fixes []) >> All) ||
           (Parse.term >> Term)
         val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
 
@@ -408,6 +416,10 @@ val setup =
         val (r, toks') = scan toks
         val (r', ctxt') = Context.map_proof_result (fn ctxt => f ctxt r) ctxt
       in (r', (ctxt', toks' : Token.T list))end
+
+    fun read_fixes fixes ctxt =
+      let fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx)
+      in Proof_Context.add_fixes (map read_typ fixes) ctxt end
 
     fun prep_pats ctxt (ps : (string, binding * string option * mixfix) pattern list) =
       let
@@ -441,9 +453,7 @@ val setup =
                 the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
             in (Term (t', bs), (n', ctxt')) end
           | prep (All ss) (n, ctxt) =
-            let
-              fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx)
-              val (ns, ctxt') = Proof_Context.add_fixes (map read_typ ss) ctxt
+            let val (ns, ctxt') = read_fixes ss ctxt
             in (All ns, (n, ctxt')) end
           | prep At (n,ctxt) = (At, (n, ctxt))
           | prep In (n,ctxt) = (In, (n, ctxt))
@@ -464,7 +474,7 @@ val setup =
     fun prep_args ctxt (((raw_pats, raw_to), raw_ths), (raw_insts, raw_fors)) =
       let
 
-        fun f ctxt = (*TODO rename*)
+        fun interpret_term_patterns ctxt =
           let
 
             fun descend_hole fixes (Abs (_, _, t)) =
@@ -488,16 +498,9 @@ val setup =
               | descend_hole fixes t =
                 if is_hole t then SOME (fixes, I) else NONE
 
-            fun prep (Term (t, fixes)) =
-                let val f = descend_hole (rev fixes) #> the_default ([], I) #> snd
-                in Term (t, f t) end
-              | prep (All ss) = (All ss)
-              | prep At = At
-              | prep In = In
-              | prep Concl = Concl
-              | prep Asm = Asm
+            fun f (t, fixes) = Term (t, (descend_hole (rev fixes) #> the_default ([], I) #> snd) t)
 
-          in map prep end
+          in map (map_term_pattern f) end
 
         fun check_terms ctxt ps to (insts_vars, insts_ts) =
           let
@@ -529,10 +532,8 @@ val setup =
             val insts = insts_vars ~~ ts'' (* XXX length check? *)
           in ((ps', to', insts), ctxt') end
 
-        fun read_typ (b, rawT, mx) = (b, Option.map (Syntax.read_typ ctxt) rawT, mx) (*XXX copied *)
-
         val ((_, pats), ctxt') = ctxt
-          |> Proof_Context.add_fixes (map read_typ raw_fors)
+          |> read_fixes raw_fors
           ||>> (fn ctxt => prep_pats ctxt raw_pats)
 
         val ths = Attrib.eval_thms ctxt' raw_ths
@@ -540,7 +541,7 @@ val setup =
         val insts = prep_insts ctxt' raw_insts
 
         val ((pats', to', insts'), ctxt'') = check_terms ctxt' pats to insts
-        val pats'' = f ctxt'' pats'
+        val pats'' = interpret_term_patterns ctxt'' pats'
 
       in ((pats'', ths, (insts', to', ctxt)), ctxt'') end
 

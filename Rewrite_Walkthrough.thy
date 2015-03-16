@@ -107,16 +107,16 @@ oops
 
 (* The "all" keyword. *)
 lemma "\<And>x y z. x + y + z = z + y + (x::int)"
-apply(rewrite at "x + y" in "x + y + z" in all (x y z) add.commute)
-apply(rewrite at "(y + _) + z" in all (y z) add.commute)
-apply(rewrite at "_" in all () add.commute)
+apply(rewrite at "x + y" in "x + y + z" in for (x y z) add.commute)
+apply(rewrite at "(y + _) + z" in for (y z) add.commute)
+apply(rewrite at "_" in for () add.commute)
 apply(simp)
 done
 
 (* It can be used anywhere in the pattern where there is an \<And>-Quantifier.
    TODO: This is still a little awkward. *)
 lemma "(\<And>a (b::int). b + 1 > b) \<Longrightarrow> (x::int) + 1 > x"
-apply(rewrite at "x + 1" in all (y x) at asm add.commute)
+apply(rewrite at "x + 1" in for (y x) at asm add.commute)
 apply(simp)
 done
 
