@@ -6,12 +6,12 @@
   pattern language.
 
   The patterns accepted by rewrite are of the following form:
-    <atom>    ::= <term> | concl | asm | goal
-    <pattern> ::= (in <atom> | at <atom> | for <names>) [<pattern>]
+    <atom>    ::= <term> | "concl" | "asm" | "all" "(" <names> ")"
+    <pattern> ::= (in <atom> | at <atom>) [<pattern>]
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
   patterns but has diverged significantly during its development.
-  
+
   We also allow introduction of identifiers for bound variables,
   which can then be used to match arbitary subterms inside abstractions.
 *)
@@ -23,7 +23,7 @@ end
 structure Rewrite : REWRITE1 =
 struct
 
-datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | Prop | All of 'b list;
+datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | All of 'b list;
 
 exception NO_TO_MATCH
 
@@ -243,7 +243,6 @@ fun find_matches ctxt pattern_list =
       | apply_pat In = Seq.maps (valid_match_points ctxt)
       | apply_pat Asm = Seq.maps (seq_unfold (try (ft_assm ctxt)) o ft_params ctxt)
       | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
-      | apply_pat Prop = I
       | apply_pat (All idents) = Seq.map_filter (try (ft_for ctxt (map (apfst SOME) idents))) (*XXX*)
       | apply_pat (Term x) = Seq.map_filter ( (move_term ctxt x))
 
@@ -391,24 +390,24 @@ val setup =
 
     val raw_pattern : (string, binding * string option * mixfix) pattern list parser =
       let
-        val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In) (* XXX rename *)
+        val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In)
         val atom =  (Args.$$$ "asm" >> K Asm) ||
-          (Args.$$$ "concl" >> K Concl) || (Args.$$$ "goal" >> K Prop) || (Parse.term >> Term)
+          (Args.$$$ "concl" >> K Concl) ||
+          (Args.$$$ "all" |-- Args.parens (Scan.optional Parse.fixes []) >> All) ||
+          (Parse.term >> Term)
         val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
-        val for = Args.$$$ "all" |-- Args.parens (Scan.optional Parse.fixes []) >> (single o All) (* XXX Parse.simple_fixes instead of Args.name *)
 
         fun append_default [] = [Concl, In]
           | append_default (ps as Term _ :: _) = Concl :: In :: ps
           | append_default ps = ps
 
-      in Scan.repeat (sep_atom || for) >> (flat #> rev #> append_default) end
+      in Scan.repeat sep_atom >> (flat #> rev #> append_default) end
 
     fun ctxt_lift (scan : 'a parser) f = fn (ctxt : Context.generic, toks) =>
       let
         val (r, toks') = scan toks
         val (r', ctxt') = Context.map_proof_result (fn ctxt => f ctxt r) ctxt
       in (r', (ctxt', toks' : Token.T list))end
-    val _ = ctxt_lift : 'a parser -> (Proof.context -> 'a  -> ('b * Proof.context)) -> 'b context_parser (*XXX*)
 
     fun prep_pats ctxt (ps : (string, binding * string option * mixfix) pattern list) =
       let
@@ -450,7 +449,6 @@ val setup =
           | prep In (n,ctxt) = (In, (n, ctxt))
           | prep Concl (n,ctxt) = (Concl, (n, ctxt))
           | prep Asm (n,ctxt) = (Asm, (n, ctxt))
-          | prep Prop (n,ctxt) = (Prop, (n, ctxt))
 
         val (xs, (_, ctxt')) = fold_map prep ps (0, ctxt)
 
@@ -498,7 +496,6 @@ val setup =
               | prep In = In
               | prep Concl = Concl
               | prep Asm = Asm
-              | prep Prop = Prop
 
           in map prep end
 
@@ -519,7 +516,6 @@ val setup =
               | reinsert_pat _ In ts = (In, ts)
               | reinsert_pat _ Concl ts = (Concl, ts)
               | reinsert_pat _ Asm ts = (Asm, ts)
-              | reinsert_pat _ Prop ts = (Prop, ts)
 
             fun free_constr (s,T) = Type.constraint T (Free (s, dummyT))
 
