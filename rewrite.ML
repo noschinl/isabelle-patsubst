@@ -23,10 +23,10 @@ end
 structure Rewrite : REWRITE1 =
 struct
 
-datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | All of 'b list
+datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | For of 'b list
 
 fun map_term_pattern f (Term x) = f x
-  | map_term_pattern _ (All ss) = (All ss)
+  | map_term_pattern _ (For ss) = (For ss)
   | map_term_pattern _ At = At
   | map_term_pattern _ In = In
   | map_term_pattern _ Concl = Concl
@@ -253,7 +253,7 @@ fun find_matches ctxt pattern_list =
       | apply_pat In = Seq.maps (valid_match_points ctxt)
       | apply_pat Asm = Seq.maps (seq_unfold (try (ft_assm ctxt)) o ft_params ctxt)
       | apply_pat Concl = Seq.map (ft_concl ctxt o ft_params ctxt)
-      | apply_pat (All idents) = Seq.map_filter ((ft_for ctxt (map (apfst SOME) idents)))
+      | apply_pat (For idents) = Seq.map_filter ((ft_for ctxt (map (apfst SOME) idents)))
       | apply_pat (Term x) = Seq.map_filter ( (move_term ctxt x))
 
     fun apply_pats ft = ft
@@ -403,7 +403,7 @@ val setup =
         val sep = (Args.$$$ "at" >> K At) || (Args.$$$ "in" >> K In)
         val atom =  (Args.$$$ "asm" >> K Asm) ||
           (Args.$$$ "concl" >> K Concl) ||
-          (Args.$$$ "for" |-- Args.parens (Scan.optional Parse.fixes []) >> All) ||
+          (Args.$$$ "for" |-- Args.parens (Scan.optional Parse.fixes []) >> For) ||
           (Parse.term >> Term)
         val sep_atom = sep -- atom >> (fn (s,a) => [s,a])
 
@@ -454,9 +454,9 @@ val setup =
               val ((ctxt', n', bs), t') =
                 the_default ((ctxt, n, []), t) (add_constrs ctxt (n+1) t)
             in (Term (t', bs), (n', ctxt')) end
-          | prep (All ss) (n, ctxt) =
+          | prep (For ss) (n, ctxt) =
             let val (ns, ctxt') = read_fixes ss ctxt
-            in (All ns, (n, ctxt')) end
+            in (For ns, (n, ctxt')) end
           | prep At (n,ctxt) = (At, (n, ctxt))
           | prep In (n,ctxt) = (In, (n, ctxt))
           | prep Concl (n,ctxt) = (Concl, (n, ctxt))
@@ -514,9 +514,9 @@ val setup =
                 let val (cs', ts') = safe_chop (length cs) ts
                 in (Term (t, map dest_Free cs'), ts') end (* XXX get rid of cs *)
               | reinsert_pat _ (Term _) [] = raise Match
-              | reinsert_pat ctxt (All ss) ts =
+              | reinsert_pat ctxt (For ss) ts =
                 let val fixes = map (fn s => (s, Variable.default_type ctxt s)) ss
-                in (All fixes, ts) end
+                in (For fixes, ts) end
               | reinsert_pat _ At ts = (At, ts)
               | reinsert_pat _ In ts = (In, ts)
               | reinsert_pat _ Concl ts = (Concl, ts)
