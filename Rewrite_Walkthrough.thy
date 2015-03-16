@@ -4,8 +4,7 @@ begin
 
 (* This file is intended to give an overview over
    the features of the new, modified subst method.
-   It also doubles as a test file during development,
-   so it is a little messy at some places. *)
+*)
 
 (* First, some very basic pattern based rewriting.
    Rewriting is completely done via conversions. *)
