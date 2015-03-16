@@ -23,7 +23,7 @@ end
 structure Rewrite : REWRITE1 =
 struct
 
-datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | All of 'b list;
+datatype ('a, 'b) pattern = At | In | Term of 'a | Concl | Asm | All of 'b list
 
 fun map_term_pattern f (Term x) = f x
   | map_term_pattern _ (All ss) = (All ss)
@@ -35,7 +35,7 @@ fun map_term_pattern f (Term x) = f x
 
 exception NO_TO_MATCH
 
-fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq;
+fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 
 
 (* Some types/terminology used in the code below: *)
@@ -43,7 +43,7 @@ fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => t
 (* We rewrite subterms using rewrite conversions. These are conversions
    that also take a context and a list of identifiers for bound variables
    as parameters. *)
-type rewrite_conv = Proof.context -> (string * term) list -> conv;
+type rewrite_conv = Proof.context -> (string * term) list -> conv
 
 (* To apply such a rewrite conversion to a subterm of our goal, we use
    subterm positions, which are just functions that map a rewrite conversion,
@@ -54,7 +54,7 @@ type rewrite_conv = Proof.context -> (string * term) list -> conv;
    we can rewrite. For each of these subterms, a subterm position is
    created and later used in creating a conversion that we use to try and
    rewrite this subterm. *)
-type subterm_position = rewrite_conv -> rewrite_conv;
+type subterm_position = rewrite_conv -> rewrite_conv
 
 (* A focusterm represents a subterm. It is a tuple (t, p), consisting
   of the subterm t itself and its subterm position p. *)
@@ -64,22 +64,22 @@ val dummyN = Name.internal "__dummy"
 val holeN = Name.internal "_hole"
 
 fun prep_meta_eq ctxt =
-  Simplifier.mksimps ctxt #> map Drule.zero_var_indexes;
+  Simplifier.mksimps ctxt #> map Drule.zero_var_indexes
 
 (* Functions for modifying subterm positions.
    These build on the conditional conversion package. *)
 fun below_abs ident (outer : subterm_position) : subterm_position = 
   let
     fun add_ident NONE _ l = l
-      | add_ident (SOME name) ct l = (name, Thm.term_of ct) :: l;
-    fun inner rewr ctxt idents = CConv.abs_cconv (fn (ct, ctxt) => rewr ctxt (add_ident ident ct idents)) ctxt;
-  in inner #> outer end;
+      | add_ident (SOME name) ct l = (name, Thm.term_of ct) :: l
+    fun inner rewr ctxt idents = CConv.abs_cconv (fn (ct, ctxt) => rewr ctxt (add_ident ident ct idents)) ctxt
+  in inner #> outer end
 fun below_left (outer : subterm_position) : subterm_position =
-  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.fun_cconv;
-  in inner #> outer end;
+  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.fun_cconv
+  in inner #> outer end
 fun below_right (outer : subterm_position) : subterm_position =
-  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_cconv; 
-  in inner #> outer end;
+  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_cconv 
+  in inner #> outer end
 
 fun ft_abs ctxt (s,T) (tyenv, u, pos) =
   case try (fastype_of #> dest_funT) u of
@@ -149,17 +149,17 @@ fun ft_assm ctxt (ft as (_, t, _) : focusterm) =
 fun ft_judgment ctxt (ft as (_, t, _) : focusterm) =
   if Object_Logic.is_judgment (Proof_Context.theory_of ctxt) t
   then ft_arg ctxt ft
-  else ft;
+  else ft
 
 (* Return a lazy sequenze of all subterms of the focusterm for which
    the condition holds. *)
 fun find_subterms ctxt condition (ft as (_, t, _) : focusterm) =
   let
-    val recurse = find_subterms ctxt condition;
+    val recurse = find_subterms ctxt condition
     val recursive_matches = case t of
         _ $ _ => Seq.append (ft |> ft_fun ctxt |> recurse) (ft |> ft_arg ctxt |> recurse)
       | Abs (_,T,_) => ft |> ft_abs ctxt (NONE, T) |> recurse
-      | _ => Seq.empty;
+      | _ => Seq.empty
   in
     (* If the condition is met, then the current focusterm is part of the
        sequence of results. Otherwise, only the results of the recursive
@@ -167,7 +167,7 @@ fun find_subterms ctxt condition (ft as (_, t, _) : focusterm) =
     if condition ft
     then Seq.cons ft recursive_matches
     else recursive_matches
-  end;
+  end
 
 (* Find all subterms that might be a valid point to apply a rule. *)
 fun valid_match_points ctxt =
@@ -176,20 +176,20 @@ fun valid_match_points ctxt =
       | is_valid (Abs (_, _, a)) = is_valid a
       | is_valid (Var _) = false
       | is_valid (Bound _) = false
-      | is_valid _ = true;
+      | is_valid _ = true
   in
     find_subterms ctxt (#2 #> is_valid )
-  end;
+  end
 
 fun is_hole (Var ((name, _), _)) = (name = holeN)
-  | is_hole _ = false;
+  | is_hole _ = false
 
 fun is_hole_const (Const (@{const_name rewrite_HOLE}, _)) = true
   | is_hole_const _ = false
 
 fun no_holes tm =
   if not (fold_aterms (fn t => fn b => b orelse is_hole_const t) tm false) then tm
-  else raise TERM ("Illegal occurrence of hole", [tm]);
+  else raise TERM ("Illegal occurrence of hole", [tm])
 
 val hole_syntax =
   let
@@ -201,11 +201,11 @@ val hole_syntax =
           in (Abs (x, T, t'), i') end
       | replace_hole Ts (t $ u) i =
           let
-            val (t', i') = replace_hole Ts t i;
-            val (u', i'') = replace_hole Ts u i';
+            val (t', i') = replace_hole Ts t i
+            val (u', i'') = replace_hole Ts u i'
           in (t' $ u', i'') end
-      | replace_hole _ a i = (a, i);
-    fun prep_holes ts = #1 (fold_map (replace_hole []) ts 1);
+      | replace_hole _ a i = (a, i)
+    fun prep_holes ts = #1 (fold_map (replace_hole []) ts 1)
   in
     Context.proof_map (Syntax_Phases.term_check 101 "hole_expansion" (K prep_holes))
     #> Proof_Context.set_mode Proof_Context.mode_pattern
@@ -260,7 +260,7 @@ fun find_matches ctxt pattern_list =
 
   in
     apply_pats
-  end;
+  end
 
 (* Before rewriting, we might want to instantiate the rewriting rule. *)
 fun inst_thm_insts _  ([], env) thm = (thm, env)
@@ -311,7 +311,7 @@ fun inst_thm_insts _  ([], env) thm = (thm, env)
           |> certs Thm.ctyp_of
     in
       (Drule.instantiate_normalize (tyinsts, insts) thm, env')
-    end;
+    end
 
 fun instantiate_normalize_env ctxt env thm =
   let
@@ -345,8 +345,8 @@ fun inst_thm ctxt idents (insts, to, tyenv) thm =
     val replace_idents =
       let
         fun subst ((n1, s)::ss) (t as Free (n2, _)) = if n1 = n2 then s else subst ss t
-          | subst _ t = t;
-      in Term.map_aterms (subst idents) end;
+          | subst _ t = t
+      in Term.map_aterms (subst idents) end
 
     val maxidx = Envir.maxidx_of env
         |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t] @ map snd insts)
@@ -367,23 +367,23 @@ fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL 
       case to of
         NONE => rules
       | SOME t => filter (is_some o try (unify_with_rhs context t (Envir.empty 0))) rules
-    val matches = find_matches ctxt pattern (Vartab.empty, t, I);
+    val matches = find_matches ctxt pattern (Vartab.empty, t, I)
 
     fun rewrite_conv insty ctxt bounds =
-      CConv.rewrs_cconv (map_filter (inst_thm ctxt bounds insty) filtered_rules);
+      CConv.rewrs_cconv (map_filter (inst_thm ctxt bounds insty) filtered_rules)
 
     val export = singleton (Proof_Context.export ctxt orig_ctxt)
 
     fun distinct_prems th =
       case Seq.pull (distinct_subgoals_tac th) of
         NONE => th
-      | SOME (th', _) => th';
+      | SOME (th', _) => th'
 
     fun tac (tyenv, _, position) = CCONVERSION
-      (distinct_prems o export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i;
+      (distinct_prems o export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
   in
     SEQ_CONCAT (Seq.map tac matches)
-  end);
+  end)
 
 fun rewrite_tac ctxt pattern thms =
   let
@@ -506,7 +506,7 @@ val setup =
           let
             fun safe_chop (0: int) xs = ([], xs)
               | safe_chop n (x :: xs) = chop (n - 1) xs |>> cons x
-              | safe_chop _ _ = raise Match; (* XXX *)
+              | safe_chop _ _ = raise Match (* XXX *)
 
             fun reinsert_pat _ (Term (_, cs)) (t :: ts) =
                 let val (cs', ts') = safe_chop (length cs) ts
@@ -558,5 +558,5 @@ val setup =
     Method.setup @{binding rewrite} (subst_parser >>
       (fn (pattern, inthms, inst) => fn ctxt => SIMPLE_METHOD' (rewrite_tac ctxt (pattern, inst) inthms)))
       "single-step rewriting, allowing subterm selection via patterns."
-  end;
-end;
+  end
+end
