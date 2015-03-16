@@ -87,7 +87,7 @@ fun ft_abs ctxt (s,T) (tyenv, u, pos) =
   | SOME (U, _) =>
   let
     val tyenv' = if T = dummyT then tyenv else Sign.typ_match (Proof_Context.theory_of ctxt) (T, U) tyenv
-    val x = Free (the_default (Name.internal dummyN) s (*XXX*), Envir.norm_type tyenv' T)
+    val x = Free (the_default (Name.internal dummyN) s, Envir.norm_type tyenv' T)
     val desc = below_abs s
     val eta_expand_cconv = CConv.rewr_cconv @{thm eta_expand}
     fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
@@ -512,7 +512,7 @@ val setup =
 
             fun reinsert_pat _ (Term (_, cs)) (t :: ts) =
                 let val (cs', ts') = safe_chop (length cs) ts
-                in (Term (t, map dest_Free cs'), ts') end (* XXX get rid of cs *)
+                in (Term (t, map dest_Free cs'), ts') end
               | reinsert_pat _ (Term _) [] = raise Match
               | reinsert_pat ctxt (For ss) ts =
                 let val fixes = map (fn s => (s, Variable.default_type ctxt s)) ss
@@ -523,15 +523,15 @@ val setup =
               | reinsert_pat _ Asm ts = (Asm, ts)
 
             fun free_constr (s,T) = Type.constraint T (Free (s, dummyT))
+            fun mk_free_constrs (Term (t, cs)) = t :: map free_constr cs
+              | mk_free_constrs _ = []
 
-            val tos = case to of NONE => [] | SOME t => [t]
-
-            val ts = maps (fn (Term (t, cs)) => t :: map free_constr cs | _ => []) ps @ tos @ insts_ts
-            val ts' = Syntax.check_terms (hole_syntax ctxt) ts
-            val ctxt' = fold Variable.declare_term ts' ctxt
-            val (ps', (to', ts'')) = fold_map (reinsert_pat ctxt') ps ts'
+            val ts = maps mk_free_constrs ps @ map_filter I [to] @ insts_ts
+              |> Syntax.check_terms (hole_syntax ctxt)
+            val ctxt' = fold Variable.declare_term ts ctxt
+            val (ps', (to', ts')) = fold_map (reinsert_pat ctxt') ps ts
               ||> (fn xs => case to of NONE => (NONE, xs) | SOME _ => (SOME (hd xs), tl xs))
-            val insts = insts_vars ~~ ts'' (* XXX length check? *)
+            val insts = insts_vars ~~ ts'
           in ((ps', to', insts), ctxt') end
 
         val ((_, pats), ctxt') = ctxt
