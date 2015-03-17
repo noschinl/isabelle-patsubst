@@ -2,3 +2,5 @@
 *.blg
 *.fls
 *.pdf
+\#*#
+.*.marks
