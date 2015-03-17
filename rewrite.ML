@@ -37,9 +37,6 @@ exception NO_TO_MATCH
 
 fun SEQ_CONCAT (tacq : tactic Seq.seq) : tactic = fn st => Seq.maps (fn tac => tac st) tacq
 
-
-(* Some types/terminology used in the code below: *)
-
 (* We rewrite subterms using rewrite conversions. These are conversions
    that also take a context and a list of identifiers for bound variables
    as parameters. *)
@@ -68,18 +65,18 @@ fun prep_meta_eq ctxt =
 
 (* Functions for modifying subterm positions.
    These build on the conditional conversion package. *)
-fun below_abs ident (outer : subterm_position) : subterm_position = 
+fun below_abs ident : subterm_position =
   let
     fun add_ident NONE _ l = l
       | add_ident (SOME name) ct l = (name, Thm.term_of ct) :: l
     fun inner rewr ctxt idents = CConv.abs_cconv (fn (ct, ctxt) => rewr ctxt (add_ident ident ct idents)) ctxt
-  in inner #> outer end
-fun below_left (outer : subterm_position) : subterm_position =
+  in inner end
+val below_left : subterm_position =
   let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.fun_cconv
-  in inner #> outer end
-fun below_right (outer : subterm_position) : subterm_position =
+  in inner end
+val below_right : subterm_position =
   let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_cconv 
-  in inner #> outer end
+  in inner end
 
 fun ft_abs ctxt (s,T) (tyenv, u, pos) =
   case try (fastype_of #> dest_funT) u of
@@ -93,16 +90,16 @@ fun ft_abs ctxt (s,T) (tyenv, u, pos) =
     fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
     val (u', pos') =
       case u of
-        Abs (_,_,t') => (subst_bound (x, t'), desc pos)
-      | _ => (u $ x, desc (pos o eta_expand))
+        Abs (_,_,t') => (subst_bound (x, t'), pos o desc)
+      | _ => (u $ x, pos o eta_expand o desc)
   in (tyenv', u', pos') end
   handle Pattern.MATCH => raise TYPE ("ft_abs: types don't match", [T,U], [u])
 
-fun ft_fun _ (tyenv, l $ _, pos) = (tyenv, l, below_left pos)
+fun ft_fun _ (tyenv, l $ _, pos) = (tyenv, l, pos o below_left)
   | ft_fun ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_fun ctxt o ft_abs ctxt (NONE, T)) ft
   | ft_fun _ (_, t, _) = raise TERM ("ft_fun", [t])
 
-fun ft_arg _ (tyenv, _ $ r, pos) = (tyenv, r, below_right pos)
+fun ft_arg _ (tyenv, _ $ r, pos) = (tyenv, r, pos o below_right)
   | ft_arg ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_arg ctxt o ft_abs ctxt (NONE, T)) ft
   | ft_arg _ (_, t, _) = raise TERM ("ft_arg", [t])
 
