@@ -63,20 +63,20 @@ val holeN = Name.internal "_hole"
 fun prep_meta_eq ctxt =
   Simplifier.mksimps ctxt #> map Drule.zero_var_indexes
 
-(* Functions for modifying subterm positions.
-   These build on the conditional conversion package. *)
-fun below_abs ident : subterm_position =
+
+(* rewrite conversions *)
+
+fun abs_rewr_cconv ident : subterm_position =
   let
     fun add_ident NONE _ l = l
       | add_ident (SOME name) ct l = (name, Thm.term_of ct) :: l
     fun inner rewr ctxt idents = CConv.abs_cconv (fn (ct, ctxt) => rewr ctxt (add_ident ident ct idents)) ctxt
   in inner end
-val below_left : subterm_position =
-  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.fun_cconv
-  in inner end
-val below_right : subterm_position =
-  let fun inner rewr ctxt bounds = rewr ctxt bounds |> CConv.arg_cconv 
-  in inner end
+val fun_rewr_cconv : subterm_position = fn rewr => CConv.fun_cconv oo rewr
+val arg_rewr_cconv : subterm_position = fn rewr => CConv.arg_cconv oo rewr
+
+
+(* focus terms *)
 
 fun ft_abs ctxt (s,T) (tyenv, u, pos) =
   case try (fastype_of #> dest_funT) u of
@@ -85,21 +85,20 @@ fun ft_abs ctxt (s,T) (tyenv, u, pos) =
   let
     val tyenv' = if T = dummyT then tyenv else Sign.typ_match (Proof_Context.theory_of ctxt) (T, U) tyenv
     val x = Free (the_default (Name.internal dummyN) s, Envir.norm_type tyenv' T)
-    val desc = below_abs s
     val eta_expand_cconv = CConv.rewr_cconv @{thm eta_expand}
     fun eta_expand rewr ctxt bounds = eta_expand_cconv then_conv rewr ctxt bounds
     val (u', pos') =
       case u of
-        Abs (_,_,t') => (subst_bound (x, t'), pos o desc)
-      | _ => (u $ x, pos o eta_expand o desc)
+        Abs (_,_,t') => (subst_bound (x, t'), pos o abs_rewr_cconv s)
+      | _ => (u $ x, pos o eta_expand o abs_rewr_cconv s)
   in (tyenv', u', pos') end
   handle Pattern.MATCH => raise TYPE ("ft_abs: types don't match", [T,U], [u])
 
-fun ft_fun _ (tyenv, l $ _, pos) = (tyenv, l, pos o below_left)
+fun ft_fun _ (tyenv, l $ _, pos) = (tyenv, l, pos o fun_rewr_cconv)
   | ft_fun ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_fun ctxt o ft_abs ctxt (NONE, T)) ft
   | ft_fun _ (_, t, _) = raise TERM ("ft_fun", [t])
 
-fun ft_arg _ (tyenv, _ $ r, pos) = (tyenv, r, pos o below_right)
+fun ft_arg _ (tyenv, _ $ r, pos) = (tyenv, r, pos o arg_rewr_cconv)
   | ft_arg ctxt (ft as (_, Abs (_, T, _ $ Bound 0), _)) = (ft_arg ctxt o ft_abs ctxt (NONE, T)) ft
   | ft_arg _ (_, t, _) = raise TERM ("ft_arg", [t])
 
@@ -149,6 +148,7 @@ fun ft_judgment ctxt (ft as (_, t, _) : focusterm) =
   if Object_Logic.is_judgment (Proof_Context.theory_of ctxt) t
   then ft_arg ctxt ft
   else ft
+
 
 (* Return a lazy sequenze of all subterms of the focusterm for which
    the condition holds. *)
