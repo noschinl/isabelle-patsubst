@@ -305,8 +305,7 @@ fun inst_thm ctxt idents (to, tyenv) thm =
           | subst _ t = t
       in Term.map_aterms (subst idents) end
 
-    val maxidx = Envir.maxidx_of env
-        |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t])
+    val maxidx = Envir.maxidx_of env |> fold Term.maxidx_term (map_filter I [to])
     val thm' = Thm.incr_indexes (maxidx + 1) thm
   in SOME (inst_thm_to ctxt (Option.map replace_idents to, env) thm' |> @{print} ) end
   handle NO_TO_MATCH => NONE
@@ -469,7 +468,7 @@ val setup =
             val ctxt' = fold Variable.declare_term ts ctxt
             val (ps', (to', ts')) = fold_map (reinsert_pat ctxt') ps ts
               ||> (fn xs => case to of NONE => (NONE, xs) | SOME _ => (SOME (hd xs), tl xs))
-            val _ = case ts' of (_ :: _) => raise Match |  [] => 0
+            val _ = case ts' of (_ :: _) => raise Match | [] => ()
           in ((ps', to'), ctxt') end
 
         val (pats, ctxt') = prep_pats ctxt raw_pats
