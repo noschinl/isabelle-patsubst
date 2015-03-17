@@ -361,15 +361,10 @@ fun inst_thm ctxt idents (insts, to, tyenv) thm =
 (* Rewrite in subgoal i. *)
 fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
   let
-    val context = Context.Proof ctxt
-    val filtered_rules =
-      case to of
-        NONE => rules
-      | SOME t => filter (is_some o try (unify_with_rhs context t (Envir.empty 0))) rules
     val matches = find_matches ctxt pattern (Vartab.empty, t, I)
 
     fun rewrite_conv insty ctxt bounds =
-      CConv.rewrs_cconv (map_filter (inst_thm ctxt bounds insty) filtered_rules)
+      CConv.rewrs_cconv (map_filter (inst_thm ctxt bounds insty) rules)
 
     val export = singleton (Proof_Context.export ctxt orig_ctxt)
 
