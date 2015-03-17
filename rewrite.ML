@@ -331,7 +331,7 @@ fun instantiate_normalize_env ctxt env thm =
 fun unify_with_rhs context to env thm =
   let
     val (_, rhs) = thm |> Thm.concl_of |> Logic.dest_equals
-    val env' = Pattern.unify context (to, rhs) env
+    val env' = Pattern.unify context (Logic.mk_term to, Logic.mk_term rhs) env
       handle Pattern.Unif => raise NO_TO_MATCH
   in env' end
 
