@@ -94,7 +94,7 @@ lemma
   and     "0 \<le> f x"
   and     "0 = y"
   shows   "f x = y"
-by (rewrite at "f x" test_theorem where y = 0)
+by (rewrite at "f x" to "0" test_theorem)
    (rule assms)+
    
 lemma
@@ -102,7 +102,7 @@ lemma
   and     "\<And>x::nat. 42 \<le> 3 + x"
   and     "f x = P (\<lambda>x. 42 + y)"
   shows   "f x = P (\<lambda>(x::nat). 3 + x + y)"
-by (rewrite at "3 + _" test_theorem where y=42)
+by (rewrite at "3 + _" to "42"test_theorem)
    (rule assms)+
 
 (* Instantiation with bound variables. *)
@@ -111,29 +111,22 @@ definition "f_inv (I :: nat \<Rightarrow> bool) n \<equiv> f n"
 lemma
   assumes "P (\<lambda>n. f_inv (\<lambda>x. True) n + 1) = x"
   shows   "P (\<lambda>n. f n + 1) = x"
-by (rewrite f_inv_def[symmetric] where I = "\<lambda>x. True")
+by (rewrite to "f_inv (\<lambda>_. True) _" f_inv_def[symmetric])
    (rule assms)
    
 lemma
   assumes "P (\<lambda>n. f_inv (\<lambda>x. n < x + 1) n + 1) = x"
   shows   "P (\<lambda>n. f n + 1) = x"
-by (rewrite in "\<lambda>n. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. n < x + 1")
+by (rewrite in "\<lambda>n. \<box>" to "f_inv (\<lambda>x. n < x + 1) _" f_inv_def[symmetric])
    (rule assms)
    
 lemma
   assumes "P (\<lambda>n. f_inv (\<lambda>x. n < x + 1) n + 1) = x"
   shows   "P (\<lambda>n. f n + 1) = x"
-by (rewrite in "\<lambda>any_identifier_works. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. any_identifier_works < x + 1")
+by (rewrite in "\<lambda>any_identifier_works. \<box>" to "f_inv (\<lambda>x. any_identifier_works < x + 1) _" f_inv_def[symmetric])
    (rule assms)
 
-(* The for keyword *)
-
-lemma
-  assumes "\<And>x. P (\<lambda>n. f_inv (g x) n) = x"
-  shows "P (\<lambda>n. f n) = x"
-  by (rewrite in "\<lambda>n. \<box>" f_inv_def[symmetric] where I="g y" for y) fact
-
-(* The all-keyword. *)
+(* The for-keyword. *)
 
 lemma
   assumes "P (2 + 1)"
@@ -205,7 +198,6 @@ lemma
   shows "P ((g :: int \<Rightarrow> nat \<Rightarrow> nat) 3)"
   by (rewrite at "g _ _"  rewr) (rule a)
 
-
 (* A more complex example of instantiation involving the while combinator. *)
 definition "while_inv (I :: 'a \<Rightarrow> bool) (c :: 'a \<Rightarrow> bool) b s \<equiv> while c b s"
 
@@ -230,7 +222,9 @@ lemma
                  in (i + 1, x'))
                (0,0)
            ) = 12"
-by (rewrite in "snd (while _ (\<lambda>(i, _). \<box>) _)" while_inv_def[symmetric] where ?I = "\<lambda>(j, x). x = j + 3*i" )
+by (rewrite in "snd (while _ (\<lambda>(i, _). \<box>) _)"
+      to "while_inv (\<lambda>(j, x). x = j + 3*i) _ _ _"
+      while_inv_def[symmetric])
    (rule assms)
 
 

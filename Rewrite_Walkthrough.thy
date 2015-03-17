@@ -2,8 +2,10 @@ theory Rewrite_Walkthrough
 imports Complex_Main Rewrite "~~/src/HOL/Library/While_Combinator"
 begin
 
+section \<open>The rewrite Proof Method by Example\<close>
+
 (* This file is intended to give an overview over
-   the features of the new, modified subst method.
+   the features of the pattern-based rewrite proof method.
 *)
 
 (* First, some very basic pattern based rewriting.
@@ -63,7 +65,7 @@ shows "f x = y"
 (* If we apply the rule directly, the result's premises will contain a free schematic variable ?y. *)
 (*apply(rewrite test_theorem)*)
 (* It makes sense to instantiate ?y beforehand. *)
-apply(rewrite at "f x" test_theorem where y = 0)
+apply (rewrite at "f x" to "0" test_theorem)
 oops
 
 
@@ -71,7 +73,7 @@ oops
 lemma
 fixes f :: "nat \<Rightarrow> nat"
 shows "f x = P (\<lambda>(x::nat). 3 + x + y)"
-apply(rewrite at "3 + _" test_theorem where y=42)
+apply(rewrite at "3 + _" to 42 test_theorem)
 oops
 
 
@@ -91,20 +93,20 @@ definition "f_inv (I :: nat \<Rightarrow> bool) n \<equiv> f n"
    want to add an invariant to f. *)
 lemma "P (\<lambda>n. f n + 1) = x"
 (* Substitute f_inv for f and instantiate ?I with a simple invariant. *)
-apply(rewrite f_inv_def[symmetric] where I = "\<lambda>x. True")
+apply(rewrite to "f_inv (\<lambda>_. True) _" f_inv_def[symmetric])
 apply(rewrite f_inv_def)
 
 (* We can also add an invariant that contains the variable n bound in the outer context.
    For this, we need to bind this variable to an identifier. *)
-apply(rewrite in "\<lambda>n. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. n < x + 1")
+apply(rewrite in "\<lambda>n. \<box>" to "f_inv (\<lambda>x. n < x + 1) _" f_inv_def[symmetric])
 apply(rewrite f_inv_def)
 
 (* Any identifier will work *)
-apply(rewrite in "\<lambda>abc. \<box>" f_inv_def[symmetric] where I = "\<lambda>x. abc < x + 1")
+apply(rewrite in "\<lambda>abc. \<box>" to "f_inv (\<lambda>x. abc < x + 1) _" f_inv_def[symmetric])
 apply(rewrite f_inv_def)
 oops
 
-(* The "all" keyword. *)
+(* The "for" keyword. *)
 lemma "\<And>x y z. x + y + z = z + y + (x::int)"
 apply(rewrite at "x + y" in "x + y + z" in for (x y z) add.commute)
 apply(rewrite at "(y + _) + z" in for (y z) add.commute)
@@ -134,7 +136,7 @@ lemma "
       (0,0)
   ) = 12"
 (* We use pattern to specify exactly which while loop to annotate and also to give names to bound variables in the goal. *)
-apply(rewrite in "snd (while _ (\<lambda>(i, _). \<box>) _)" while_inv_def[symmetric] where ?I = "\<lambda>(j::nat, x). x = j + 3*i" )
+apply(rewrite in "snd (while _ (\<lambda>(i, _). \<box>) _)" to "while_inv (\<lambda>(j::nat, x). x = j + 3*i) _ _ _" while_inv_def[symmetric])
 oops
 
 end

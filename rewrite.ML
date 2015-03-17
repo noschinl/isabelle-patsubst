@@ -186,10 +186,6 @@ fun is_hole (Var ((name, _), _)) = (name = holeN)
 fun is_hole_const (Const (@{const_name rewrite_HOLE}, _)) = true
   | is_hole_const _ = false
 
-fun no_holes tm =
-  if not (fold_aterms (fn t => fn b => b orelse is_hole_const t) tm false) then tm
-  else raise TERM ("Illegal occurrence of hole", [tm])
-
 val hole_syntax =
   let
     (* Modified variant of Term.replace_hole *)
@@ -261,57 +257,6 @@ fun find_matches ctxt pattern_list =
     apply_pats
   end
 
-(* Before rewriting, we might want to instantiate the rewriting rule. *)
-fun inst_thm_insts _  ([], env) thm = (thm, env)
-  | inst_thm_insts ctxt (raw_insts, env) thm =
-    let
-      fun find_var thm_vars x =
-          case AList.lookup (op=) thm_vars x of
-            NONE => error ("Could not find variable " ^ Syntax.string_of_term ctxt (Syntax.var x) ^ " in theorem")
-          | SOME T => T
-
-      fun prep_inst tyenv (x, t) =
-        let
-          val t' = Envir.subst_term_types tyenv t
-          val x' =  (x, fastype_of t')
-        in (x', t') end
-
-      fun certs f = map (apply2 (f ctxt))
-
-      val thm_vars = Term.add_vars (Thm.prop_of thm) []
-
-      val tyassoc = map (fn (x, t) => (find_var thm_vars x, fastype_of t)) raw_insts
-      val context  = Context.Proof ctxt
-      fun typ_unify (T,U) env = Pattern.unify_types context (T,U) env
-        handle Pattern.Unif =>
-        let
-          fun prt_vt (x, (sort, T)) =
-            map (Syntax.pretty_typ ctxt) [TVar (x, sort), T]
-            |> Pretty.separate " \<rightarrow>"
-            |> Pretty.block
-          val prt =
-            [ Pretty.str "Failed to instantiate. Cannot unify types",
-              Pretty.big_list "" (map (Syntax.pretty_typ ctxt) [T,U]),
-              Pretty.brk 1,
-              Pretty.str "with respect to type environment",
-              Pretty.big_list "" (map prt_vt (Vartab.dest (Envir.type_env env))) ]
-            |> Pretty.chunks
-        in Pretty.string_of prt |> error end
-      val env' = fold typ_unify tyassoc env
-
-      val insts = raw_insts
-        |> map (prep_inst (Envir.type_env env'))
-        |> map (apfst Var)
-        |> certs Thm.cterm_of
-
-      val tyinsts =
-          fold Term.add_tvarsT (map fst tyassoc) []
-          |> map (fn x => (TVar x, Envir.norm_type (Envir.type_env env') (TVar x)))
-          |> certs Thm.ctyp_of
-    in
-      (Drule.instantiate_normalize (tyinsts, insts) thm, env')
-    end
-
 fun instantiate_normalize_env ctxt env thm =
   let
     fun certs f = map (apply2 (f ctxt))
@@ -334,9 +279,22 @@ fun unify_with_rhs context to env thm =
 
 fun inst_thm_to _ (NONE, _) thm = thm
   | inst_thm_to (ctxt : Proof.context) (SOME to, env) thm =
-      instantiate_normalize_env ctxt (unify_with_rhs (Context.Proof ctxt) to env thm) thm
+      let
+        val _ = writeln "1"
+        val env' = unify_with_rhs (Context.Proof ctxt) to env thm
+        val x =
+      instantiate_normalize_env ctxt env' thm
+        handle TYPE t => (
+            @{print} to;
+            @{print} (thm |> Thm.concl_of |> Logic.dest_equals |> snd);
+            @{print} env;
+            @{print} env';
+            @{print} t;
+            raise (TYPE t))
+        val _ = writeln "2"
+      in x end
 
-fun inst_thm ctxt idents (insts, to, tyenv) thm =
+fun inst_thm ctxt idents (to, tyenv) thm =
   let
     (* Replace any identifiers with their corresponding bound variables. *)
     val maxidx = Term.maxidx_typs (map (snd o snd) (Vartab.dest tyenv)) 0
@@ -348,18 +306,13 @@ fun inst_thm ctxt idents (insts, to, tyenv) thm =
       in Term.map_aterms (subst idents) end
 
     val maxidx = Envir.maxidx_of env
-        |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t] @ map snd insts)
-    val insts' = insts
-      |> map (fn ((s,n), t) => ((s, n + maxidx + 1), t))
-      |> map (apsnd replace_idents)
-    val (thm', env') = thm
-      |> Thm.incr_indexes (maxidx + 1)
-      |> inst_thm_insts ctxt (insts', env)
-  in SOME (inst_thm_to ctxt (Option.map replace_idents to, env') thm') end
+        |> fold Term.maxidx_term (case to of NONE => [] | SOME t => [t])
+    val thm' = Thm.incr_indexes (maxidx + 1) thm
+  in SOME (inst_thm_to ctxt (Option.map replace_idents to, env) thm' |> @{print} ) end
   handle NO_TO_MATCH => NONE
 
 (* Rewrite in subgoal i. *)
-fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
+fun rewrite_goal_with_thm ctxt (pattern, (to, orig_ctxt)) rules = SUBGOAL (fn (t,i) =>
   let
     val matches = find_matches ctxt pattern (Vartab.empty, t, I)
 
@@ -374,7 +327,7 @@ fun rewrite_goal_with_thm ctxt (pattern, (inst, to, orig_ctxt)) rules = SUBGOAL 
       | SOME (th', _) => th'
 
     fun tac (tyenv, _, position) = CCONVERSION
-      (distinct_prems o export o position (rewrite_conv (inst, to, tyenv)) ctxt []) i
+      (distinct_prems o export o position (rewrite_conv (to, tyenv)) ctxt []) i
   in
     SEQ_CONCAT (Seq.map tac matches)
   end)
@@ -458,14 +411,7 @@ val setup =
 
       in (xs, ctxt') end
 
-    fun prep_insts ctxt (raw_insts : (indexname * string) list) =
-      let
-        val (ri_vars, ri_vals) = split_list raw_insts
-        val validate = Sign.no_vars ctxt o Term.no_dummy_patterns o no_holes
-        val ri_ts = map (validate o Syntax.parse_term ctxt) ri_vals
-      in (ri_vars, ri_ts) end
-
-    fun prep_args ctxt (((raw_pats, raw_to), raw_ths), (raw_insts, raw_fors)) =
+    fun prep_args ctxt (((raw_pats, raw_to), raw_ths)) =
       let
 
         fun interpret_term_patterns ctxt =
@@ -496,7 +442,7 @@ val setup =
 
           in map (map_term_pattern f) end
 
-        fun check_terms ctxt ps to (insts_vars, insts_ts) =
+        fun check_terms ctxt ps to =
           let
             fun safe_chop (0: int) xs = ([], xs)
               | safe_chop n (x :: xs) = chop (n - 1) xs |>> cons x
@@ -518,35 +464,28 @@ val setup =
             fun mk_free_constrs (Term (t, cs)) = t :: map free_constr cs
               | mk_free_constrs _ = []
 
-            val ts = maps mk_free_constrs ps @ map_filter I [to] @ insts_ts
+            val ts = maps mk_free_constrs ps @ map_filter I [to]
               |> Syntax.check_terms (hole_syntax ctxt)
             val ctxt' = fold Variable.declare_term ts ctxt
             val (ps', (to', ts')) = fold_map (reinsert_pat ctxt') ps ts
               ||> (fn xs => case to of NONE => (NONE, xs) | SOME _ => (SOME (hd xs), tl xs))
-            val insts = insts_vars ~~ ts'
-          in ((ps', to', insts), ctxt') end
+            val _ = case ts' of (_ :: _) => raise Match |  [] => 0
+          in ((ps', to'), ctxt') end
 
-        val ((_, pats), ctxt') = ctxt
-          |> read_fixes raw_fors
-          ||>> (fn ctxt => prep_pats ctxt raw_pats)
+        val (pats, ctxt') = prep_pats ctxt raw_pats
 
         val ths = Attrib.eval_thms ctxt' raw_ths
         val to = Option.map (Syntax.parse_term ctxt') raw_to
-        val insts = prep_insts ctxt' raw_insts
 
-        val ((pats', to', insts'), ctxt'') = check_terms ctxt' pats to insts
+        val ((pats', to'), ctxt'') = check_terms ctxt' pats to
         val pats'' = interpret_term_patterns ctxt'' pats'
 
-      in ((pats'', ths, (insts', to', ctxt)), ctxt'') end
+      in ((pats'', ths, (to', ctxt)), ctxt'') end
 
     val to_parser = Scan.option ((Args.$$$ "to") |-- Parse.term)
 
-    val where_parser = Scan.optional
-      ((Args.$$$ "where") |-- Parse.and_list (Args.var --| Args.$$$ "=" -- Args.name_inner_syntax)) []
-    val instantiation_parser = where_parser -- Parse.for_fixes
-
     val subst_parser =
-      let val scan = raw_pattern -- to_parser -- Parse.xthms1 -- instantiation_parser
+      let val scan = raw_pattern -- to_parser -- Parse.xthms1
       in ctxt_lift scan prep_args end
   in
     Method.setup @{binding rewrite} (subst_parser >>
