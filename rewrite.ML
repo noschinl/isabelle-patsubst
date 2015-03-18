@@ -8,6 +8,7 @@
   The patterns accepted by rewrite are of the following form:
     <atom>    ::= <term> | "concl" | "asm" | "for" "(" <names> ")"
     <pattern> ::= (in <atom> | at <atom>) [<pattern>]
+    <args>    ::= [<pattern>] ("to" <term>) <thms>
 
   This syntax was clearly inspired by Gonthier's and Tassi's language of
   patterns but has diverged significantly during its development.
@@ -279,20 +280,7 @@ fun unify_with_rhs context to env thm =
 
 fun inst_thm_to _ (NONE, _) thm = thm
   | inst_thm_to (ctxt : Proof.context) (SOME to, env) thm =
-      let
-        val _ = writeln "1"
-        val env' = unify_with_rhs (Context.Proof ctxt) to env thm
-        val x =
-      instantiate_normalize_env ctxt env' thm
-        handle TYPE t => (
-            @{print} to;
-            @{print} (thm |> Thm.concl_of |> Logic.dest_equals |> snd);
-            @{print} env;
-            @{print} env';
-            @{print} t;
-            raise (TYPE t))
-        val _ = writeln "2"
-      in x end
+      instantiate_normalize_env ctxt (unify_with_rhs (Context.Proof ctxt) to env thm) thm
 
 fun inst_thm ctxt idents (to, tyenv) thm =
   let
@@ -307,7 +295,7 @@ fun inst_thm ctxt idents (to, tyenv) thm =
 
     val maxidx = Envir.maxidx_of env |> fold Term.maxidx_term (map_filter I [to])
     val thm' = Thm.incr_indexes (maxidx + 1) thm
-  in SOME (inst_thm_to ctxt (Option.map replace_idents to, env) thm' |> @{print} ) end
+  in SOME (inst_thm_to ctxt (Option.map replace_idents to, env) thm') end
   handle NO_TO_MATCH => NONE
 
 (* Rewrite in subgoal i. *)
