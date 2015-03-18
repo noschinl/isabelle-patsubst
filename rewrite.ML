@@ -1,9 +1,6 @@
-(*
-  Author: Christoph Traut, TU Muenchen
+(* Author: Christoph Traut, Lars Noschinski
 
-  This is a prototype for a subst method that allows subterm-selection
-  via patterns. It also supports advanced instantiaton based on this
-  pattern language.
+  This is a rewrite method supports subterm-selection based on patterns.
 
   The patterns accepted by rewrite are of the following form:
     <atom>    ::= <term> | "concl" | "asm" | "for" "(" <names> ")"
